@@ -33,6 +33,7 @@ class BleSessionController(
     private var sessionStartedAtMs = 0L
     private var heartbeatIntervalMs = HEARTBEAT_DEFAULT_MS
     private var nextHeartbeatAtMs = Long.MAX_VALUE
+    private var lastDeviceFrameAtMs = 0L
     private var state = ProtocolSessionState.IDLE
     private var localMaximumFrameSize = 20
 
@@ -44,6 +45,7 @@ class BleSessionController(
         sessionStartedAtMs = nowElapsedMs()
         heartbeatIntervalMs = HEARTBEAT_DEFAULT_MS
         nextHeartbeatAtMs = Long.MAX_VALUE
+        lastDeviceFrameAtMs = sessionStartedAtMs
         state = ProtocolSessionState.WAITING_DEVICE_READY
         onStateChanged(state, "已订阅 TX，发送 Phone Starting")
         sendFrames(
@@ -53,6 +55,9 @@ class BleSessionController(
     }
 
     fun onDeviceEvent(event: NativeBleEvent) {
+        if (event !is NativeBleEvent.Error) {
+            lastDeviceFrameAtMs = nowElapsedMs()
+        }
         when (event) {
             is NativeBleEvent.ConnectionStatus -> onConnectionStatus(event)
             is NativeBleEvent.Heartbeat -> {
@@ -71,6 +76,11 @@ class BleSessionController(
     fun tick() {
         if (state != ProtocolSessionState.READY || sessionId == 0u) return
         val now = nowElapsedMs()
+        val deviceSilenceMs = now - lastDeviceFrameAtMs
+        if (deviceSilenceMs >= heartbeatIntervalMs * 3L) {
+            fail("设备心跳超时：${deviceSilenceMs}ms 未收到有效帧")
+            return
+        }
         if (now < nextHeartbeatAtMs) return
         val elapsed = (now - sessionStartedAtMs).coerceAtLeast(0L).toUInt()
         sendFrames(codec.encodeHeartbeat(sessionId, elapsed), false)
@@ -81,6 +91,7 @@ class BleSessionController(
         state = ProtocolSessionState.IDLE
         sessionId = 0u
         nextHeartbeatAtMs = Long.MAX_VALUE
+        lastDeviceFrameAtMs = 0L
         codec.resetInboundState()
         onStateChanged(state, "连接已断开")
     }
