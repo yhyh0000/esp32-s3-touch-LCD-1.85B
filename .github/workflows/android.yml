@@ -48,3 +48,10 @@ jobs:
       - name: Build, unit test and lint
         working-directory: platforms/android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: moto-gps-android-debug-${{ github.sha }}
+          path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
