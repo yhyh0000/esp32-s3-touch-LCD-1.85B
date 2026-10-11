@@ -7,6 +7,9 @@
 
     <!-- Android 12+ separates scan and connection permissions. We do not use
          neverForLocation: navigation still has an independent location path. -->
+    <!-- Required by older Android/Android-compatible emulator Bluetooth APIs. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

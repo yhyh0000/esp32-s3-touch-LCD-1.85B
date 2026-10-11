@@ -162,7 +162,12 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             fail("缺少 BLE 扫描权限")
             return
         }
-        val scanner = adapter?.bluetoothLeScanner
+        val scanner = try {
+            adapter?.bluetoothLeScanner
+        } catch (error: SecurityException) {
+            fail("缺少系统蓝牙权限：${error.message ?: "BLUETOOTH"}")
+            return
+        }
         if (scanner == null) {
             fail("蓝牙不可用或已关闭")
             return
@@ -195,7 +200,13 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             }
         }
         scanCallback = callback
-        scanner.startScan(filters, settings, callback)
+        try {
+            scanner.startScan(filters, settings, callback)
+        } catch (error: SecurityException) {
+            scanCallback = null
+            fail("缺少系统蓝牙扫描权限：${error.message ?: "BLUETOOTH_SCAN"}")
+            return
+        }
         scanStop = Runnable { stopScan() }
         mainHandler.postDelayed(scanStop!!, SCAN_DURATION_MS)
     }
@@ -417,10 +428,13 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     }
 
     private fun stopScan() {
-        val scanner = adapter?.bluetoothLeScanner
         val callback = scanCallback
-        if (scanner != null && callback != null && hasScanPermission()) {
-            scanner.stopScan(callback)
+        if (callback != null && hasScanPermission()) {
+            try {
+                adapter?.bluetoothLeScanner?.stopScan(callback)
+            } catch (_: SecurityException) {
+                // The scan is already being torn down; do not crash while cleaning up.
+            }
         }
         scanCallback = null
         scanStop?.let(mainHandler::removeCallbacks)
@@ -445,15 +459,27 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) ==
                 PackageManager.PERMISSION_GRANTED
         } else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
+            val bluetoothGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.BLUETOOTH,
+            ) == PackageManager.PERMISSION_GRANTED
+            val locationGranted = Build.VERSION.SDK_INT < 23 ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                ) == PackageManager.PERMISSION_GRANTED
+            bluetoothGranted && locationGranted
         }
     }
 
     private fun hasConnectPermission(): Boolean {
-        return Build.VERSION.SDK_INT < 31 ||
+        return if (Build.VERSION.SDK_INT >= 31) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
-            PackageManager.PERMISSION_GRANTED
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) ==
+                PackageManager.PERMISSION_GRANTED
+        }
     }
 
     private fun updateState(
