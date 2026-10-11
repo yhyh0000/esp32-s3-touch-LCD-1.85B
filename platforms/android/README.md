@@ -70,6 +70,10 @@ Windows PowerShell：
 
 CI 会从干净检出拉取子模块，并安装固定的 SDK、NDK 和 CMake 后执行相同的 Gradle 检查。
 
+当前提交 `ef5f4bc` 的 [Android app checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38124607549)
+已通过；同一提交的 [Source checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38124607466)
+也已通过。验证范围是干净 CI 环境中的编译、JNI/CMake、单元测试、lint 和 Debug APK 打包，不等于真机验收。
+
 ## 权限与未验证项
 
 第一阶段申请 Android 12+ 的 `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`，旧系统申请精确定位用于
@@ -84,7 +88,7 @@ MTU 实际值和耗电。没有真机结果时不标记硬件验收完成。
 
 | 阶段 | 状态 |
 | --- | --- |
-| 工程 / JNI / BLE / 协议自检 | 已实现，待 CI 构建和真机验收 |
+| 工程 / JNI / BLE / 协议自检 | 已实现，CI 构建通过，待真机验收 |
 | 搜索、WGS84 定位、候选路线、导航快照 | 未开始 |
 | 前台导航服务、锁屏与断连恢复回归 | 未开始 |
 | 在线 / 城市 / 沿途地图下载 | 未开始 |
