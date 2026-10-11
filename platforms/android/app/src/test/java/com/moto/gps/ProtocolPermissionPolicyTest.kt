@@ -1,6 +1,7 @@
 package com.moto.gps
 
 import com.moto.gps.ble.MotoBleUuids
+import com.moto.gps.protocol.NativeBleEvent
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -19,5 +20,15 @@ class ProtocolPermissionPolicyTest {
             "7e57a002-b50c-4b6a-9c57-40a54e8e1000",
             MotoBleUuids.deviceToPhone.toString(),
         )
+    }
+
+    @Test
+    fun keepsAckMetadataForDeviceMessages() {
+        val event = NativeBleEvent.fromJson(
+            "{\"kind\":\"complete\",\"type\":33," +
+                "\"sequence\":17,\"ackRequested\":true}"
+        )
+        assertEquals(17, event.sequence)
+        assertEquals(true, event.ackRequested)
     }
 }

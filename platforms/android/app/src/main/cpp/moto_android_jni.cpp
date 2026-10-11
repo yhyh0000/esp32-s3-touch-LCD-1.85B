@@ -218,6 +218,19 @@ Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeHeartbeat(
   return encode_message(env, codec, moto::ble::Message{heartbeat});
 }
 
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeAck(
+    JNIEnv* env, jobject, jlong handle, jint acknowledged_sequence,
+    jint status, jint command_id) {
+  auto* codec = state_from_handle(handle);
+  if (codec == nullptr) return nullptr;
+  moto::ble::Ack ack;
+  ack.acknowledged_sequence = static_cast<std::uint16_t>(acknowledged_sequence);
+  ack.status = static_cast<moto::ble::AckStatus>(status);
+  ack.command_id = static_cast<std::uint16_t>(command_id);
+  return encode_message(env, codec, moto::ble::Message{ack});
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativePushDeviceFrame(
     JNIEnv* env, jobject, jlong handle, jbyteArray frame, jlong received_at_ms) {

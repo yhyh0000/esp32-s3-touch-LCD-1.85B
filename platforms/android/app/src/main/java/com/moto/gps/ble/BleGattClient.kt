@@ -414,6 +414,16 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         mainHandler.post {
             val event = codec.pushDeviceFrame(value, android.os.SystemClock.elapsedRealtime())
             session.onDeviceEvent(event)
+            if (event.ackRequested && event.sequence != 0) {
+                enqueueFrames(
+                    codec.encodeAck(
+                        sequence = event.sequence,
+                        status = 0,
+                        commandId = event.ackCommandId,
+                    ),
+                    true,
+                )
+            }
             if (event is com.moto.gps.protocol.NativeBleEvent.Error) {
                 updateState(linkState = BleLinkState.ERROR, protocolReady = false, message = event.message)
             }

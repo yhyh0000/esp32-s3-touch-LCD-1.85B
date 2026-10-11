@@ -33,6 +33,13 @@ class NativeBleCodec(maximumFrameSize: Int = 20) : AutoCloseable {
             ?: error("shared BLE codec rejected Heartbeat")
     }
 
+    fun encodeAck(sequence: Int, status: Int = 0, commandId: Int = 0): List<ByteArray> {
+        check(handle != 0L) { "codec is closed" }
+        return nativeEncodeAck(handle, sequence, status, commandId)
+            ?.toList()
+            ?: error("shared BLE codec rejected Ack")
+    }
+
     fun pushDeviceFrame(frame: ByteArray, receivedAtMs: Long): NativeBleEvent {
         check(handle != 0L) { "codec is closed" }
         val json = nativePushDeviceFrame(handle, frame, receivedAtMs)
@@ -72,6 +79,13 @@ class NativeBleCodec(maximumFrameSize: Int = 20) : AutoCloseable {
             monotonicMs: Int,
         ): Array<ByteArray>?
 
+        private external fun nativeEncodeAck(
+            handle: Long,
+            acknowledgedSequence: Int,
+            status: Int,
+            commandId: Int,
+        ): Array<ByteArray>?
+
         private external fun nativePushDeviceFrame(
             handle: Long,
             frame: ByteArray,
@@ -91,6 +105,13 @@ enum class ConnectionState(val wireValue: Int) {
 }
 
 sealed interface NativeBleEvent {
+    val sequence: Int
+        get() = 0
+    val ackRequested: Boolean
+        get() = false
+    val ackCommandId: Int
+        get() = 0
+
     data class ConnectionStatus(
         val role: Int,
         val state: Int,
@@ -110,6 +131,14 @@ sealed interface NativeBleEvent {
         val acknowledgedSequence: Int,
         val status: Int,
         val commandId: Int,
+    ) : NativeBleEvent
+
+    /** A valid message whose payload is not needed by the first Android stage. */
+    data class DeviceMessage(
+        val type: Int,
+        override val sequence: Int,
+        override val ackRequested: Boolean,
+        override val ackCommandId: Int = 0,
     ) : NativeBleEvent
 
     data class Partial(val sequence: Int) : NativeBleEvent
@@ -146,7 +175,12 @@ sealed interface NativeBleEvent {
                             commandId = value.optInt("commandId"),
                         )
 
-                        else -> Error("unsupported device message type ${value.optInt("type")}")
+                        else -> DeviceMessage(
+                            type = value.optInt("type"),
+                            sequence = value.optInt("sequence"),
+                            ackRequested = value.optBoolean("ackRequested"),
+                            ackCommandId = value.optInt("commandId"),
+                        )
                     }
 
                     else -> Error("unknown native event kind")
