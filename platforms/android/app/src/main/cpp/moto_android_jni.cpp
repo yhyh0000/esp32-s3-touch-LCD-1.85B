@@ -165,21 +165,21 @@ std::vector<std::uint8_t> bytes_from_initializer(
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeCreate(JNIEnv*, jclass,
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeCreate(JNIEnv*, jobject,
                                                         jint maximum_frame_size) {
   return reinterpret_cast<jlong>(new CodecState(
       static_cast<std::size_t>(std::max(maximum_frame_size, 20))));
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeDestroy(JNIEnv*, jclass,
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeDestroy(JNIEnv*, jobject,
                                                         jlong handle) {
   delete state_from_handle(handle);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeSetMaximumFrameSize(
-    JNIEnv*, jclass, jlong handle, jint maximum_frame_size) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeSetMaximumFrameSize(
+    JNIEnv*, jobject, jlong handle, jint maximum_frame_size) {
   auto* state = state_from_handle(handle);
   if (state == nullptr) return;
   state->maximum_frame_size = std::clamp<std::size_t>(
@@ -188,15 +188,15 @@ Java_com_moto_gps_protocol_NativeBleCodec_nativeSetMaximumFrameSize(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeResetInboundState(
-    JNIEnv*, jclass, jlong handle) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeResetInboundState(
+    JNIEnv*, jobject, jlong handle) {
   auto* state = state_from_handle(handle);
   if (state != nullptr) state->reassembler.reset();
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeEncodeConnectionStatus(
-    JNIEnv* env, jclass, jlong handle, jint state, jint session_id) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeConnectionStatus(
+    JNIEnv* env, jobject, jlong handle, jint state, jint session_id) {
   auto* codec = state_from_handle(handle);
   if (codec == nullptr) return nullptr;
   const auto status = phone_status(
@@ -207,8 +207,8 @@ Java_com_moto_gps_protocol_NativeBleCodec_nativeEncodeConnectionStatus(
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeEncodeHeartbeat(
-    JNIEnv* env, jclass, jlong handle, jint session_id, jint monotonic_ms) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeHeartbeat(
+    JNIEnv* env, jobject, jlong handle, jint session_id, jint monotonic_ms) {
   auto* codec = state_from_handle(handle);
   if (codec == nullptr) return nullptr;
   moto::ble::Heartbeat heartbeat;
@@ -219,8 +219,8 @@ Java_com_moto_gps_protocol_NativeBleCodec_nativeEncodeHeartbeat(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativePushDeviceFrame(
-    JNIEnv* env, jclass, jlong handle, jbyteArray frame, jlong received_at_ms) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativePushDeviceFrame(
+    JNIEnv* env, jobject, jlong handle, jbyteArray frame, jlong received_at_ms) {
   auto* codec = state_from_handle(handle);
   if (codec == nullptr || frame == nullptr) return nullptr;
   const jsize size = env->GetArrayLength(frame);
@@ -251,8 +251,8 @@ Java_com_moto_gps_protocol_NativeBleCodec_nativePushDeviceFrame(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeGoldenVectorCheck(JNIEnv*,
-                                                                   jclass) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeGoldenVectorCheck(JNIEnv*,
+                                                                                 jobject) {
   moto::ble::ConnectionStatus status;
   status.role = moto::ble::EndpointRole::Phone;
   status.state = moto::ble::ConnectionState::Ready;
@@ -283,8 +283,8 @@ Java_com_moto_gps_protocol_NativeBleCodec_nativeGoldenVectorCheck(JNIEnv*,
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_moto_gps_protocol_NativeBleCodec_nativeCoordinateSanityCheck(
-    JNIEnv*, jclass) {
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeCoordinateSanityCheck(
+    JNIEnv*, jobject) {
   const moto::coordinates::Coordinate input{117.1219266, 36.6743309};
   const auto converted = moto::coordinates::wgs84_to_gcj02(input);
   return (converted.ok() && std::isfinite(converted.coordinate.latitude_deg) &&
