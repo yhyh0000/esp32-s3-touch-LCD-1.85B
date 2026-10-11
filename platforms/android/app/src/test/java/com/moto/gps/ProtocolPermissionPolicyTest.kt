@@ -28,6 +28,7 @@ class ProtocolPermissionPolicyTest {
             "{\"kind\":\"complete\",\"type\":33," +
                 "\"sequence\":17,\"ackRequested\":true}"
         )
+        assertEquals(NativeBleEvent.DeviceMessage::class, event::class)
         when (event) {
             is NativeBleEvent.DeviceMessage -> {
                 assertEquals(17, event.sequence)
