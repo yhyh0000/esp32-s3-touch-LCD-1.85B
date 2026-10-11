@@ -1,6 +1,7 @@
 package com.moto.gps.ble
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -36,6 +37,7 @@ private const val GATT_INSUFFICIENT_AUTHENTICATION = 5
 private const val GATT_INSUFFICIENT_ENCRYPTION = 15
 
 /** Android GATT central for the existing 1.85B firmware. */
+@SuppressLint("MissingPermission")
 class BleGattClient(private val context: Context) : AutoCloseable {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bluetoothManager =
