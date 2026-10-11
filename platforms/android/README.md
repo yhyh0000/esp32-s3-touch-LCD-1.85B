@@ -23,8 +23,8 @@
 | CMake | 3.22.1 |
 
 Android 16 的真机行为仍以实测为准；targetSdk 35 不等于已经完成 Android 16 兼容验收。
-本机当前没有可用的 JDK、Android SDK 或 Gradle 命令，因此第一阶段的 Android 构建由 GitHub
-Actions 在干净环境执行；不要把这个限制写成“本地构建通过”。
+本机可使用仓库外置的 JDK 17，但当前没有完整 Android SDK/NDK 安装，因此本地 Gradle 不能作为
+可复现验收依据；Android 构建由 GitHub Actions 在干净环境执行，不把它写成“本地构建通过”。
 
 ## 已实现内容
 
