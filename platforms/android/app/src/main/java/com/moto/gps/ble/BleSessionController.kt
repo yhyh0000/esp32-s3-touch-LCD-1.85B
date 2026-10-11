@@ -1,6 +1,7 @@
 package com.moto.gps.ble
 
 import android.os.SystemClock
+import android.util.Log
 import com.moto.gps.protocol.ConnectionState
 import com.moto.gps.protocol.NativeBleCodec
 import com.moto.gps.protocol.NativeBleEvent

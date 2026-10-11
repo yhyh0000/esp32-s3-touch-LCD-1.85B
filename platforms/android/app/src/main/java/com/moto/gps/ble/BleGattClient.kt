@@ -23,6 +23,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.moto.gps.protocol.NativeBleCodec
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -607,11 +608,6 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 "GATT op timeout id=$operationId elapsed=${elapsed}ms " +
                     "${operation.description} pending=${pendingOperations.size}",
             )
-        BleDiagnostics.i(
-            TAG,
-            "GATT op complete id=$activeOperationId status=$status elapsed=${elapsed}ms " +
-                "${operation.description} pending=${pendingOperations.size}",
-        )
             abortGatt("GATT 操作超时：${operation.description}，已断开并等待重新连接")
         }
         operationTimeoutRunnable = timeout
@@ -628,6 +624,11 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         operationTimeoutRunnable = null
         val elapsed = android.os.SystemClock.elapsedRealtime() - activeOperationStartedAtMs
         Log.i(
+            TAG,
+            "GATT op complete id=$activeOperationId status=$status elapsed=${elapsed}ms " +
+                "${operation.description} pending=${pendingOperations.size}",
+        )
+        BleDiagnostics.i(
             TAG,
             "GATT op complete id=$activeOperationId status=$status elapsed=${elapsed}ms " +
                 "${operation.description} pending=${pendingOperations.size}",
