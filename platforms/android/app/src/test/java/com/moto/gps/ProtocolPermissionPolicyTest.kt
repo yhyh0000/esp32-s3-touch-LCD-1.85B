@@ -4,6 +4,7 @@ import com.moto.gps.ble.MotoBleUuids
 import com.moto.gps.protocol.NativeBleEvent
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.json.JSONObject
 
 class ProtocolPermissionPolicyTest {
     @Test
@@ -24,10 +25,12 @@ class ProtocolPermissionPolicyTest {
 
     @Test
     fun keepsAckMetadataForDeviceMessages() {
-        val event = NativeBleEvent.fromJson(
-            "{\"kind\":\"complete\",\"type\":33," +
-                "\"sequence\":17,\"ackRequested\":true}"
-        )
+        val json = "{\"kind\":\"complete\",\"type\":33," +
+            "\"sequence\":17,\"ackRequested\":true}"
+        val jsonObject = JSONObject(json)
+        assertEquals("complete", jsonObject.optString("kind"))
+        assertEquals(33, jsonObject.optInt("type", -1))
+        val event = NativeBleEvent.fromJson(json)
         assertEquals("DeviceMessage", event::class.simpleName)
         when (event) {
             is NativeBleEvent.DeviceMessage -> {
