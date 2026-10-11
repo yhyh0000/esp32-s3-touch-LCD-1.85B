@@ -162,6 +162,15 @@ std::vector<std::uint8_t> bytes_from_initializer(
   return std::vector<std::uint8_t>(bytes);
 }
 
+std::string string_from_jni(JNIEnv* env, jstring value) {
+  if (value == nullptr) return {};
+  const char* chars = env->GetStringUTFChars(value, nullptr);
+  if (chars == nullptr) return {};
+  const std::string result(chars);
+  env->ReleaseStringUTFChars(value, chars);
+  return result;
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -229,6 +238,75 @@ Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeAck(
   ack.status = static_cast<moto::ble::AckStatus>(status);
   ack.command_id = static_cast<std::uint16_t>(command_id);
   return encode_message(env, codec, moto::ble::Message{ack});
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeNavigationSnapshot(
+    JNIEnv* env, jobject, jlong handle, jintArray values, jstring road_name,
+    jstring instruction) {
+  auto* codec = state_from_handle(handle);
+  if (codec == nullptr || values == nullptr) return nullptr;
+  const jsize size = env->GetArrayLength(values);
+  if (size != 20) return nullptr;
+  std::vector<jint> input(static_cast<std::size_t>(size));
+  env->GetIntArrayRegion(values, 0, size, input.data());
+
+  moto::ble::NavigationSnapshot snapshot;
+  snapshot.state = static_cast<moto::ble::NavigationState>(input[0]);
+  snapshot.network = static_cast<moto::ble::NetworkState>(input[1]);
+  snapshot.display_page = static_cast<moto::ble::DisplayPage>(input[2]);
+  snapshot.maneuver = static_cast<moto::ble::Maneuver>(input[3]);
+  snapshot.traffic = static_cast<moto::ble::TrafficLevel>(input[4]);
+  snapshot.flags = static_cast<std::uint16_t>(input[5]);
+  snapshot.route_token = static_cast<std::uint32_t>(input[6]);
+  snapshot.route_generation = static_cast<std::uint32_t>(input[7]);
+  snapshot.maneuver_id = static_cast<std::uint32_t>(input[8]);
+  snapshot.distance_to_maneuver_m = static_cast<std::uint32_t>(input[9]);
+  snapshot.remaining_distance_m = static_cast<std::uint32_t>(input[10]);
+  snapshot.remaining_duration_s = static_cast<std::uint32_t>(input[11]);
+  snapshot.route_progress_m = static_cast<std::uint32_t>(input[12]);
+  snapshot.total_distance_m = static_cast<std::uint32_t>(input[13]);
+  snapshot.speed_deci_kph = static_cast<std::uint16_t>(input[14]);
+  snapshot.speed_limit_kph = static_cast<std::uint16_t>(input[15]);
+  snapshot.heading_cdeg = static_cast<std::uint16_t>(input[16]);
+  snapshot.accuracy_dm = static_cast<std::uint16_t>(input[17]);
+  snapshot.cross_track_dm = static_cast<std::uint16_t>(input[18]);
+  snapshot.roundabout_exit = static_cast<std::uint8_t>(input[19]);
+  snapshot.road_name = string_from_jni(env, road_name);
+  snapshot.instruction = string_from_jni(env, instruction);
+  return encode_message(env, codec, moto::ble::Message{snapshot});
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeEncodeRouteGeometry(
+    JNIEnv* env, jobject, jlong handle, jintArray header, jintArray points) {
+  auto* codec = state_from_handle(handle);
+  if (codec == nullptr || header == nullptr || points == nullptr) return nullptr;
+  if (env->GetArrayLength(header) != 9) return nullptr;
+  const jsize point_values = env->GetArrayLength(points);
+  if (point_values <= 0 || point_values % 2 != 0) return nullptr;
+  std::vector<jint> header_values(9);
+  std::vector<jint> point_values_copy(static_cast<std::size_t>(point_values));
+  env->GetIntArrayRegion(header, 0, 9, header_values.data());
+  env->GetIntArrayRegion(points, 0, point_values, point_values_copy.data());
+
+  moto::ble::RouteGeometry geometry;
+  geometry.coordinate_system =
+      static_cast<moto::ble::CoordinateSystem>(header_values[0]);
+  geometry.route_token = static_cast<std::uint32_t>(header_values[1]);
+  geometry.route_generation = static_cast<std::uint32_t>(header_values[2]);
+  geometry.chunk_index = static_cast<std::uint16_t>(header_values[3]);
+  geometry.chunk_count = static_cast<std::uint16_t>(header_values[4]);
+  geometry.first_point_index = static_cast<std::uint16_t>(header_values[5]);
+  geometry.total_point_count = static_cast<std::uint16_t>(header_values[6]);
+  geometry.view_origin.latitude_e6 = header_values[7];
+  geometry.view_origin.longitude_e6 = header_values[8];
+  geometry.points.reserve(static_cast<std::size_t>(point_values / 2));
+  for (jsize index = 0; index < point_values; index += 2) {
+    geometry.points.push_back({point_values_copy[static_cast<std::size_t>(index)],
+                               point_values_copy[static_cast<std::size_t>(index + 1)]});
+  }
+  return encode_message(env, codec, moto::ble::Message{geometry});
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -304,4 +382,26 @@ Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeCoordinateSanityC
           std::isfinite(converted.coordinate.longitude_deg))
              ? JNI_TRUE
              : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeRouteToken(
+    JNIEnv* env, jobject, jstring route_id) {
+  if (route_id == nullptr) return 0;
+  const std::string value = string_from_jni(env, route_id);
+  return static_cast<jint>(moto::ble::route_token(value));
+}
+
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_com_moto_gps_protocol_NativeBleCodec_00024Companion_nativeWgs84ToGcj02(
+    JNIEnv* env, jobject, jdouble longitude_deg, jdouble latitude_deg) {
+  const moto::coordinates::Coordinate input{longitude_deg, latitude_deg};
+  const auto converted = moto::coordinates::wgs84_to_gcj02(input);
+  if (!converted.ok()) return nullptr;
+  auto* result = env->NewDoubleArray(2);
+  if (result == nullptr) return nullptr;
+  const jdouble values[2] = {converted.coordinate.longitude_deg,
+                             converted.coordinate.latitude_deg};
+  env->SetDoubleArrayRegion(result, 0, 2, values);
+  return result;
 }

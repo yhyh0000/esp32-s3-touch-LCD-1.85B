@@ -40,6 +40,54 @@ class NativeBleCodec(maximumFrameSize: Int = 20) : AutoCloseable {
             ?: error("shared BLE codec rejected Ack")
     }
 
+    fun encodeNavigationSnapshot(snapshot: NavigationSnapshot): List<ByteArray> {
+        check(handle != 0L) { "codec is closed" }
+        val values = intArrayOf(
+            snapshot.state.wireValue,
+            snapshot.network.wireValue,
+            snapshot.displayPage.wireValue,
+            snapshot.maneuver.wireValue,
+            snapshot.traffic.wireValue,
+            snapshot.flags,
+            snapshot.routeToken.toInt(),
+            snapshot.routeGeneration.toInt(),
+            snapshot.maneuverId.toInt(),
+            snapshot.distanceToManeuverM,
+            snapshot.remainingDistanceM,
+            snapshot.remainingDurationS,
+            snapshot.routeProgressM,
+            snapshot.totalDistanceM,
+            snapshot.speedDeciKph,
+            snapshot.speedLimitKph,
+            snapshot.headingCdeg,
+            snapshot.accuracyDm,
+            snapshot.crossTrackDm,
+            snapshot.roundaboutExit,
+        )
+        return nativeEncodeNavigationSnapshot(handle, values, snapshot.roadName, snapshot.instruction)
+            ?.toList()
+            ?: error("shared BLE codec rejected NavigationSnapshot")
+    }
+
+    fun encodeRouteGeometry(geometry: RouteGeometry): List<ByteArray> {
+        check(handle != 0L) { "codec is closed" }
+        val header = intArrayOf(
+            geometry.coordinateSystem.wireValue,
+            geometry.routeToken.toInt(),
+            geometry.routeGeneration.toInt(),
+            geometry.chunkIndex,
+            geometry.chunkCount,
+            geometry.firstPointIndex,
+            geometry.totalPointCount,
+            geometry.viewOrigin.latitudeE6,
+            geometry.viewOrigin.longitudeE6,
+        )
+        val points = geometry.points.flatMap { listOf(it.latitudeE6, it.longitudeE6) }.toIntArray()
+        return nativeEncodeRouteGeometry(handle, header, points)
+            ?.toList()
+            ?: error("shared BLE codec rejected RouteGeometry")
+    }
+
     fun pushDeviceFrame(frame: ByteArray, receivedAtMs: Long): NativeBleEvent {
         check(handle != 0L) { "codec is closed" }
         val json = nativePushDeviceFrame(handle, frame, receivedAtMs)
@@ -51,16 +99,17 @@ class NativeBleCodec(maximumFrameSize: Int = 20) : AutoCloseable {
 
     fun coordinateSanityCheck(): Boolean = nativeCoordinateSanityCheck()
 
-    override fun close() {
-        if (handle != 0L) {
-            nativeDestroy(handle)
-            handle = 0L
-        }
-    }
-
     companion object {
         init {
             System.loadLibrary("moto_android_jni")
+        }
+
+        fun routeToken(routeId: String): UInt = nativeRouteToken(routeId).toUInt()
+
+        fun wgs84ToGcj02(longitudeDeg: Double, latitudeDeg: Double): Pair<Double, Double> {
+            val converted = nativeWgs84ToGcj02(longitudeDeg, latitudeDeg)
+            require(converted.size == 2) { "shared coordinate conversion returned invalid data" }
+            return converted[0] to converted[1]
         }
 
         private external fun nativeCreate(maximumFrameSize: Int): Long
@@ -86,6 +135,19 @@ class NativeBleCodec(maximumFrameSize: Int = 20) : AutoCloseable {
             commandId: Int,
         ): Array<ByteArray>?
 
+        private external fun nativeEncodeNavigationSnapshot(
+            handle: Long,
+            values: IntArray,
+            roadName: String,
+            instruction: String,
+        ): Array<ByteArray>?
+
+        private external fun nativeEncodeRouteGeometry(
+            handle: Long,
+            header: IntArray,
+            points: IntArray,
+        ): Array<ByteArray>?
+
         private external fun nativePushDeviceFrame(
             handle: Long,
             frame: ByteArray,
@@ -94,6 +156,15 @@ class NativeBleCodec(maximumFrameSize: Int = 20) : AutoCloseable {
 
         private external fun nativeGoldenVectorCheck(): Boolean
         private external fun nativeCoordinateSanityCheck(): Boolean
+        private external fun nativeRouteToken(routeId: String): Int
+        private external fun nativeWgs84ToGcj02(longitudeDeg: Double, latitudeDeg: Double): DoubleArray
+    }
+
+    override fun close() {
+        if (handle != 0L) {
+            nativeDestroy(handle)
+            handle = 0L
+        }
     }
 }
 
@@ -103,6 +174,99 @@ enum class ConnectionState(val wireValue: Int) {
     DEGRADED(2),
     CLOSING(3),
 }
+
+enum class NavigationState(val wireValue: Int) {
+    IDLE(0),
+    ACQUIRING(1),
+    PLANNING(2),
+    NAVIGATING(3),
+    REROUTING(4),
+    ARRIVED(5),
+}
+
+enum class NetworkState(val wireValue: Int) {
+    OFFLINE(0),
+    CONNECTING(1),
+    ONLINE(2),
+}
+
+enum class DisplayPage(val wireValue: Int) {
+    NAVIGATION(0),
+    SPEED(1),
+    COMPASS(2),
+    MUSIC(3),
+}
+
+enum class Maneuver(val wireValue: Int) {
+    UNKNOWN(0),
+    CONTINUE(1),
+    SLIGHT_LEFT(2),
+    LEFT(3),
+    SHARP_LEFT(4),
+    U_TURN_LEFT(5),
+    SLIGHT_RIGHT(6),
+    RIGHT(7),
+    SHARP_RIGHT(8),
+    U_TURN_RIGHT(9),
+    ROUNDABOUT(10),
+    EXIT(11),
+    ARRIVE(12),
+}
+
+enum class TrafficLevel(val wireValue: Int) {
+    UNKNOWN(0),
+    FREE_FLOW(1),
+    SLOW(2),
+    CONGESTED(3),
+    SEVERE(4),
+}
+
+enum class CoordinateSystem(val wireValue: Int) {
+    WGS84(1),
+    GCJ02(2),
+}
+
+data class GeoPointE6(
+    val latitudeE6: Int,
+    val longitudeE6: Int,
+)
+
+data class NavigationSnapshot(
+    val state: NavigationState = NavigationState.IDLE,
+    val network: NetworkState = NetworkState.OFFLINE,
+    val displayPage: DisplayPage = DisplayPage.NAVIGATION,
+    val maneuver: Maneuver = Maneuver.UNKNOWN,
+    val traffic: TrafficLevel = TrafficLevel.UNKNOWN,
+    val flags: Int = 0,
+    val routeToken: UInt = 0u,
+    val routeGeneration: UInt = 0u,
+    val maneuverId: UInt = 0u,
+    val distanceToManeuverM: Int = 0,
+    val remainingDistanceM: Int = 0,
+    val remainingDurationS: Int = 0,
+    val routeProgressM: Int = 0,
+    val totalDistanceM: Int = 0,
+    val speedDeciKph: Int = 0,
+    val speedLimitKph: Int = 0,
+    val headingCdeg: Int = 0,
+    val accuracyDm: Int = 0,
+    val crossTrackDm: Int = 0,
+    val roundaboutExit: Int = 0,
+    val roadName: String = "",
+    val instruction: String = "",
+)
+
+data class RouteGeometry(
+    val coordinateSystem: CoordinateSystem = CoordinateSystem.GCJ02,
+    val routeToken: UInt,
+    val routeGeneration: UInt,
+    val chunkIndex: Int = 0,
+    val chunkCount: Int = 1,
+    val firstPointIndex: Int = 0,
+    val totalPointCount: Int,
+    val viewOrigin: GeoPointE6,
+    val points: List<GeoPointE6>,
+)
 
 sealed interface NativeBleEvent {
     data class ConnectionStatus(

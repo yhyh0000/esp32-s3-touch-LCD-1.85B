@@ -22,6 +22,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +35,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.moto.gps.ble.BleLinkState
+import com.moto.gps.navigation.NavigationUiState
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,9 +52,12 @@ class MainActivity : ComponentActivity() {
 private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val diagnostics by viewModel.diagnostics.collectAsStateWithLifecycle()
+    val navigation by viewModel.navigationState.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     var permissionMessage by remember { mutableStateOf("") }
     var showDiagnostics by remember { mutableStateOf(true) }
+    var gatewayUrl by remember { mutableStateOf(navigation.gatewayUrl) }
+    var destinationQuery by remember { mutableStateOf(navigation.query) }
     val permissions = remember { requiredPermissions() }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -110,6 +115,28 @@ private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
                     Text("当前阶段只验证 BLE 与协议握手，尚未发送路线或模拟位置。")
                 }
             }
+        }
+
+        item {
+            NavigationPanel(
+                state = navigation,
+                gatewayUrl = gatewayUrl,
+                destinationQuery = destinationQuery,
+                onGatewayUrlChanged = {
+                    gatewayUrl = it
+                    viewModel.setGatewayUrl(it)
+                },
+                onDestinationQueryChanged = {
+                    destinationQuery = it
+                    viewModel.setDestinationQuery(it)
+                },
+                onStartLocation = viewModel::startLocation,
+                onSearch = viewModel::searchPlaces,
+                onPlan = viewModel::planRoute,
+                onSelectRoute = viewModel::selectRoute,
+                onStartNavigation = viewModel::startNavigation,
+                onStopNavigation = viewModel::stopNavigation,
+            )
         }
 
         item {
@@ -208,4 +235,81 @@ private fun requiredPermissions(): List<String> = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
     }
     if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+    add(Manifest.permission.ACCESS_FINE_LOCATION)
+    add(Manifest.permission.ACCESS_COARSE_LOCATION)
 }
+
+@androidx.compose.runtime.Composable
+private fun NavigationPanel(
+    state: NavigationUiState,
+    gatewayUrl: String,
+    destinationQuery: String,
+    onGatewayUrlChanged: (String) -> Unit,
+    onDestinationQueryChanged: (String) -> Unit,
+    onStartLocation: () -> Unit,
+    onSearch: () -> Unit,
+    onPlan: (com.moto.gps.navigation.PlaceResult) -> Unit,
+    onSelectRoute: (com.moto.gps.navigation.RouteBundle) -> Unit,
+    onStartNavigation: () -> Unit,
+    onStopNavigation: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("真实导航（第一版）", style = MaterialTheme.typography.titleMedium)
+            Text("网关只接收 WGS84；路线几何按接口返回的 GCJ-02 原样发送到圆屏。")
+            OutlinedTextField(
+                value = gatewayUrl,
+                onValueChange = onGatewayUrlChanged,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("网关地址，例如 https://your-domain/moto-gps/api") },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onStartLocation) { Text("启动定位") }
+                Text(
+                    state.fix?.let { "定位 ${it.latitudeDeg.format6()}, ${it.longitudeDeg.format6()} · ±${it.accuracyM.toInt()}m" }
+                        ?: "尚无有效定位",
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
+            OutlinedTextField(
+                value = destinationQuery,
+                onValueChange = onDestinationQueryChanged,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("搜索目的地") },
+            )
+            Button(onClick = onSearch, enabled = gatewayUrl.isNotBlank() && destinationQuery.isNotBlank()) {
+                Text("搜索目的地")
+            }
+            state.places.forEach { place ->
+                OutlinedButton(onClick = { onPlan(place) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("${place.name}${place.address.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""}")
+                }
+            }
+            state.routes.forEach { route ->
+                val selected = route.routeId == state.selectedRouteId
+                OutlinedButton(
+                    onClick = { onSelectRoute(route) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("${if (selected) "✓ " else ""}${route.totalDistanceM}m / ${route.totalDurationS}s · ${route.routeId}")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onStartNavigation, enabled = state.selectedRouteId != null && !state.active) {
+                    Text("开始导航")
+                }
+                OutlinedButton(onClick = onStopNavigation, enabled = state.active) {
+                    Text("结束导航")
+                }
+            }
+            Text("导航状态：${state.message}")
+        }
+    }
+}
+
+private fun Double.format6(): String = "%.6f".format(this)

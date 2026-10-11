@@ -26,6 +26,8 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.moto.gps.protocol.NativeBleCodec
+import com.moto.gps.protocol.NavigationSnapshot
+import com.moto.gps.protocol.RouteGeometry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.ArrayDeque
@@ -313,6 +315,30 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     fun tick() {
         session.tick()
+    }
+
+    fun sendNavigationSnapshot(snapshot: NavigationSnapshot) {
+        mainHandler.post {
+            if (!_uiState.value.protocolReady) {
+                BleDiagnostics.w(TAG, "navigation snapshot ignored: protocol is not READY")
+                return@post
+            }
+            runCatching { codec.encodeNavigationSnapshot(snapshot) }
+                .onSuccess { enqueueFrames(it, withResponse = false) }
+                .onFailure { fail("导航快照编码失败：${it.message ?: "unknown"}") }
+        }
+    }
+
+    fun sendRouteGeometry(geometry: RouteGeometry) {
+        mainHandler.post {
+            if (!_uiState.value.protocolReady) {
+                BleDiagnostics.w(TAG, "route geometry ignored: protocol is not READY")
+                return@post
+            }
+            runCatching { codec.encodeRouteGeometry(geometry) }
+                .onSuccess { enqueueFrames(it, withResponse = true) }
+                .onFailure { fail("路线几何编码失败：${it.message ?: "unknown"}") }
+        }
     }
 
     fun setSelfCheckResult(result: String) {
