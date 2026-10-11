@@ -142,12 +142,14 @@ sealed interface NativeBleEvent {
         fun fromJson(json: String): NativeBleEvent {
             return runCatching {
                 val value = JSONObject(json)
-                when (value.getString("kind")) {
+                when (value.optString("kind")) {
                     "partial" -> Partial(value.optInt("sequence"))
                     "duplicate" -> Duplicate(value.optInt("sequence"))
                     "error" -> Error(value.optString("error", "unknown"))
-                    "complete" -> when (value.optInt("type")) {
-                        0x01 -> ConnectionStatus(
+                    "complete" -> {
+                        val type = value.optInt("type", -1)
+                        when {
+                            type == 0x01 -> ConnectionStatus(
                             role = value.optInt("role"),
                             state = value.optInt("state"),
                             capabilities = value.optLong("capabilities"),
@@ -155,25 +157,26 @@ sealed interface NativeBleEvent {
                             maximumFrameSize = value.optInt("maxFrameSize"),
                             heartbeatIntervalMs = value.optInt("heartbeatIntervalMs"),
                             sequence = value.optInt("sequence"),
-                        )
+                            )
 
-                        0x02 -> Heartbeat(
+                            type == 0x02 -> Heartbeat(
                             sessionId = value.optLong("sessionId").toUInt(),
                             monotonicMs = value.optLong("monotonicMs").toUInt(),
-                        )
+                            )
 
-                        0x03 -> Acknowledgement(
+                            type == 0x03 -> Acknowledgement(
                             acknowledgedSequence = value.optInt("acknowledgedSequence"),
                             status = value.optInt("status"),
                             commandId = value.optInt("commandId"),
-                        )
+                            )
 
-                        else -> DeviceMessage(
-                            type = value.optInt("type"),
-                            sequence = value.optInt("sequence"),
-                            ackRequested = value.optBoolean("ackRequested"),
-                            ackCommandId = value.optInt("commandId"),
-                        )
+                            else -> DeviceMessage(
+                                type = type,
+                                sequence = value.optInt("sequence"),
+                                ackRequested = value.optBoolean("ackRequested"),
+                                ackCommandId = value.optInt("commandId"),
+                            )
+                        }
                     }
 
                     else -> Error("unknown native event kind")
