@@ -75,79 +75,89 @@ private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
         if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
     }
 
-    Column(
+    LazyColumn(
         modifier = Modifier.fillMaxSize().padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("MOTO GPS Android", style = MaterialTheme.typography.headlineSmall)
-        Text("Waveshare ESP32-S3-Touch-LCD-1.85B · vivo X200 Pro mini / Android 16")
-        Text("链路：${uiState.linkState}；${uiState.message}")
-        if (permissionMessage.isNotBlank()) Text(permissionMessage)
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { viewModel.runProtocolSelfCheck() }) {
-                Text("协议自检")
-            }
-            OutlinedButton(onClick = { permissionLauncher.launch(permissions.toTypedArray()) }) {
-                Text("检查权限")
-            }
-            OutlinedButton(onClick = { viewModel.scan() }) {
-                Text("扫描圆屏")
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("MOTO GPS Android", style = MaterialTheme.typography.headlineSmall)
+                Text("Waveshare ESP32-S3-Touch-LCD-1.85B · vivo X200 Pro mini / Android 16")
+                Text("链路：${uiState.linkState}；${uiState.message}")
+                if (permissionMessage.isNotBlank()) Text(permissionMessage)
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text("共享核心自检：${uiState.protocolSelfCheck}")
-                Spacer(Modifier.height(4.dp))
-                Text("当前阶段只验证 BLE 与协议握手，尚未发送路线或模拟位置。")
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { viewModel.runProtocolSelfCheck() }) {
+                    Text("协议自检")
+                }
+                OutlinedButton(onClick = { permissionLauncher.launch(permissions.toTypedArray()) }) {
+                    Text("检查权限")
+                }
+                OutlinedButton(onClick = { viewModel.scan() }) {
+                    Text("扫描圆屏")
+                }
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("BLE 诊断日志（${diagnostics.size}/500）")
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("共享核心自检：${uiState.protocolSelfCheck}")
+                    Spacer(Modifier.height(4.dp))
+                    Text("当前阶段只验证 BLE 与协议握手，尚未发送路线或模拟位置。")
+                }
+            }
+        }
+
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("BLE 诊断日志（${diagnostics.size}/500）")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                                Text(if (showDiagnostics) "收起" else "展开")
+                            }
+                            OutlinedButton(onClick = viewModel::clearDiagnostics) {
+                                Text("清空")
+                            }
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { showDiagnostics = !showDiagnostics }) {
-                            Text(if (showDiagnostics) "收起" else "展开")
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(
+                                    android.content.ClipboardManager::class.java,
+                                )
+                                clipboard?.setPrimaryClip(
+                                    android.content.ClipData.newPlainText(
+                                        "MOTO GPS BLE diagnostics",
+                                        viewModel.diagnosticsText(),
+                                    ),
+                                )
+                            },
+                        ) {
+                            Text("复制日志")
                         }
-                        OutlinedButton(onClick = viewModel::clearDiagnostics) {
-                            Text("清空")
-                        }
+                        Text(
+                            "先清空，再连接一次，断开后复制全部日志",
+                            modifier = Modifier.padding(top = 12.dp),
+                        )
                     }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            val clipboard = context.getSystemService(
-                                android.content.ClipboardManager::class.java,
-                            )
-                            clipboard?.setPrimaryClip(
-                                android.content.ClipData.newPlainText(
-                                    "MOTO GPS BLE diagnostics",
-                                    viewModel.diagnosticsText(),
-                                ),
-                            )
-                        },
-                    ) {
-                        Text("复制日志")
-                    }
-                    Text(
-                        "先清空，再连接一次，断开后复制全部日志",
-                        modifier = Modifier.padding(top = 12.dp),
-                    )
-                }
-                if (showDiagnostics) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().height(260.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(diagnostics) { line ->
-                            Text(line, style = MaterialTheme.typography.bodySmall)
+                    if (showDiagnostics) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().height(260.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            items(diagnostics) { line ->
+                                Text(line, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
@@ -155,23 +165,25 @@ private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
         }
 
         if (uiState.devices.isEmpty()) {
-            Text("尚未发现设备。请确认 1.85B 固件已启动并显示 MOTO GPS。")
+            item {
+                Text("尚未发现设备。请确认 1.85B 固件已启动并显示 MOTO GPS。")
+            }
         } else {
-            Text("选择设备（必须明确选择，不自动连接）：")
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(uiState.devices, key = { it.address }) { device ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Column {
-                                Text(device.name)
-                                Text("${device.address} · RSSI ${device.rssi}")
-                            }
-                            Button(onClick = { viewModel.connect(device.address) }) {
-                                Text("连接")
-                            }
+            item {
+                Text("选择设备（必须明确选择，不自动连接）：")
+            }
+            items(uiState.devices, key = { it.address }) { device ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column {
+                            Text(device.name)
+                            Text("${device.address} · RSSI ${device.rssi}")
+                        }
+                        Button(onClick = { viewModel.connect(device.address) }) {
+                            Text("连接")
                         }
                     }
                 }
@@ -179,8 +191,10 @@ private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
         }
 
         if (uiState.linkState == BleLinkState.READY) {
-            OutlinedButton(onClick = viewModel::disconnect) {
-                Text("断开圆屏")
+            item {
+                OutlinedButton(onClick = viewModel::disconnect) {
+                    Text("断开圆屏")
+                }
             }
         }
     }
