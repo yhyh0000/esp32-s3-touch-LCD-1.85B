@@ -16,7 +16,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun connect(address: String) {
         client.uiState.value.devices
             .firstOrNull { it.address == address }
-            ?.let { device -> client.connect(device) }
+            ?.let { item -> client.connect(item.device) }
     }
 
     fun disconnect() = client.disconnect()
