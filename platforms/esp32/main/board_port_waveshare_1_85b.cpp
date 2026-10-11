@@ -79,8 +79,24 @@ bool page_button_ready = false;
 std::atomic<bool> display_dark{false};
 std::atomic<bool> touch_wake_requested{false};
 std::atomic<std::uint32_t> last_touch_ms{0};
+std::atomic<std::uint32_t> touch_error_count{0};
+std::atomic<std::uint32_t> last_touch_error_log_ms{0};
 // These fields are only accessed by the LVGL input worker.
 bool suppress_wake_touch = false;
+
+esp_err_t report_touch_error(esp_err_t error, const char* operation) {
+  const std::uint32_t now_ms =
+      static_cast<std::uint32_t>(esp_timer_get_time() / 1'000);
+  const std::uint32_t count = touch_error_count.fetch_add(1) + 1U;
+  const std::uint32_t last_log = last_touch_error_log_ms.load();
+  if (last_log == 0 || now_ms - last_log >= 1'000U) {
+    last_touch_error_log_ms.store(now_ms);
+    ESP_LOGW(kTag, "CST816S I2C error operation=%s rc=%s count=%u",
+             operation == nullptr ? "unknown" : operation,
+             esp_err_to_name(error), count);
+  }
+  return error;
+}
 
 // Exact Waveshare panel revision 1 register sequence; order matters.
 static const std::uint8_t kInitDataVersion1[] = {
@@ -516,10 +532,15 @@ esp_err_t read_touch_for_screen_wake(esp_lcd_touch_handle_t touch,
                                      esp_lcd_touch_point_data_t* points,
                                      std::uint8_t* count,
                                      std::uint8_t max_count, void*) {
-  ESP_RETURN_ON_ERROR(esp_lcd_touch_read_data(touch), kTag,
-                      "CST816S touch read failed");
-  ESP_RETURN_ON_ERROR(esp_lcd_touch_get_data(touch, points, count, max_count),
-                      kTag, "CST816S touch point read failed");
+  const esp_err_t read_result = esp_lcd_touch_read_data(touch);
+  if (read_result != ESP_OK) {
+    return report_touch_error(read_result, "read_data");
+  }
+  const esp_err_t data_result =
+      esp_lcd_touch_get_data(touch, points, count, max_count);
+  if (data_result != ESP_OK) {
+    return report_touch_error(data_result, "get_data");
+  }
   const std::uint32_t now_ms =
       static_cast<std::uint32_t>(esp_timer_get_time() / 1'000);
   const bool pressed = *count != 0;

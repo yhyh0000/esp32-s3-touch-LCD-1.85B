@@ -263,6 +263,10 @@ int BleNavTransport::gatt_access(std::uint16_t,
     ESP_LOGW(kTag, "RX queue full; rejecting %u-byte frame", length);
     return BLE_ATT_ERR_INSUFFICIENT_RES;
   }
+  ESP_LOGI(kTag,
+           "RX frame accepted epoch=%u bytes=%u queued=%u",
+           packet.connection_epoch, length,
+           static_cast<unsigned>(uxQueueMessagesWaiting(self->rx_queue_)));
   return 0;
 }
 
@@ -339,10 +343,12 @@ int BleNavTransport::gap_event(ble_gap_event* event, void* argument) {
         self->session_id_.store(0);
         self->connection_epoch_.fetch_add(1);
         ESP_LOGI(kTag,
-                 "iPhone connected; handle=%u encrypted=%u subscribed=%u",
+                 "iPhone connected; handle=%u epoch=%u encrypted=%u subscribed=%u",
                  event->connect.conn_handle,
+                 self->connection_epoch_.load(),
                  self->encrypted_.load() ? 1U : 0U,
                  self->subscribed_.load() ? 1U : 0U);
+        self->log_link_state("connect");
       } else {
         ESP_LOGW(kTag, "connection failed: status=%d",
                  event->connect.status);
@@ -362,6 +368,7 @@ int BleNavTransport::gap_event(ble_gap_event* event, void* argument) {
       self->connection_epoch_.fetch_add(1);
       self->ota_receiver_.abort();
       self->ota_active_.store(false);
+      self->log_link_state("disconnect");
       self->advertise();
       return 0;
 
@@ -372,7 +379,9 @@ int BleNavTransport::gap_event(ble_gap_event* event, void* argument) {
       }
       const bool notify = event->subscribe.cur_notify != 0;
       self->subscribed_.store(notify);
-      ESP_LOGI(kTag, "TX notifications %s", notify ? "enabled" : "disabled");
+      ESP_LOGI(kTag, "TX notifications %s attr=%u",
+               notify ? "enabled" : "disabled", event->subscribe.attr_handle);
+      self->log_link_state("subscribe");
       return 0;
     }
 
@@ -384,6 +393,7 @@ int BleNavTransport::gap_event(ble_gap_event* event, void* argument) {
           : 20U;
       self->max_frame_size_.store(frame_size);
       ESP_LOGI(kTag, "ATT MTU=%u, protocol frame=%u", value, frame_size);
+      self->log_link_state("mtu");
       return 0;
     }
 
@@ -409,6 +419,7 @@ int BleNavTransport::gap_event(ble_gap_event* event, void* argument) {
       self->encrypted_.store(encrypted);
       ESP_LOGI(kTag, "link encryption %s: status=%d",
                encrypted ? "ready" : "not ready", event->enc_change.status);
+      self->log_link_state("encryption");
       return 0;
     }
 
@@ -479,6 +490,7 @@ void BleNavTransport::run_rx_worker() {
   bool protocol_ready = false;
   bool has_observed_loss_epoch = false;
   bool resynchronizing_after_loss = false;
+  bool watchdog_degraded_reported = false;
   std::uint32_t observed_loss_epoch = 0;
   if (epoch_gate.connected()) {
     watchdog_.note_valid_frame(monotonic_ms());
@@ -488,7 +500,7 @@ void BleNavTransport::run_rx_worker() {
   RxPacket packet;
   const auto synchronize_connection_epoch =
       [this, &epoch_gate, &protocol_ready, &has_observed_loss_epoch,
-       &resynchronizing_after_loss]() {
+       &resynchronizing_after_loss, &watchdog_degraded_reported]() {
     const std::uint32_t current_epoch = connection_epoch_.load();
     if (!epoch_gate.synchronize(current_epoch, connected_.load())) {
       return;
@@ -498,6 +510,7 @@ void BleNavTransport::run_rx_worker() {
     protocol_ready = false;
     has_observed_loss_epoch = false;
     resynchronizing_after_loss = false;
+    watchdog_degraded_reported = false;
     has_last_rx_ack_ = false;
     if (xSemaphoreTake(tx_mutex_, pdMS_TO_TICKS(100)) == pdTRUE) {
       pending_ack_ = {};
@@ -569,6 +582,7 @@ void BleNavTransport::run_rx_worker() {
       }
 
       watchdog_.note_valid_frame(now);
+      watchdog_degraded_reported = false;
       note_link(true);
       if (assembled.state == moto::ble::ReassemblyState::DuplicateMessage) {
         if ((assembled.message.flags & moto::ble::AckRequested) != 0U) {
@@ -721,9 +735,34 @@ void BleNavTransport::run_rx_worker() {
     if (epoch_gate.connected() && watchdog_.expired(now)) {
       // Keep the physical BLE connection, but mark navigation stale until a
       // valid frame resumes. This separates radio link from app liveness.
+      if (!watchdog_degraded_reported) {
+        watchdog_degraded_reported = true;
+        ESP_LOGW(kTag,
+                 "phone heartbeat timeout; now=%llu deadline=%llu epoch=%u session=%u; "
+                 "reporting Degraded and marking board offline",
+                 static_cast<unsigned long long>(now),
+                 static_cast<unsigned long long>(watchdog_.deadline_ms()),
+                 connection_epoch_.load(), session_id_.load());
+        send_connection_status(moto::ble::ConnectionState::Degraded);
+      }
       note_link(false);
+    } else if (watchdog_degraded_reported) {
+      watchdog_degraded_reported = false;
+      ESP_LOGI(kTag, "phone heartbeat resumed epoch=%u session=%u",
+               connection_epoch_.load(), session_id_.load());
     }
   }
+}
+
+void BleNavTransport::log_link_state(const char* reason) const {
+  ESP_LOGI(kTag,
+           "link state reason=%s epoch=%u handle=%u connected=%u encrypted=%u "
+           "subscribed=%u session=%u frame=%u peerFrame=%u",
+           reason == nullptr ? "unknown" : reason,
+           connection_epoch_.load(), connection_handle_.load(),
+           connected_.load() ? 1U : 0U, encrypted_.load() ? 1U : 0U,
+           subscribed_.load() ? 1U : 0U, session_id_.load(),
+           max_frame_size_.load(), peer_max_frame_size_.load());
 }
 
 void BleNavTransport::note_link(bool active) {
@@ -821,9 +860,17 @@ void BleNavTransport::service_pending_ack(std::uint64_t now_ms) {
 bool BleNavTransport::notify_frames(
     const std::vector<moto::ble::Bytes>& frames) {
   if (!connected_.load() || !encrypted_.load() || !subscribed_.load()) {
+    ESP_LOGW(kTag,
+             "TX notify skipped flags connected=%u encrypted=%u subscribed=%u "
+             "epoch=%u handle=%u frames=%u",
+             connected_.load() ? 1U : 0U, encrypted_.load() ? 1U : 0U,
+             subscribed_.load() ? 1U : 0U, connection_epoch_.load(),
+             connection_handle_.load(), static_cast<unsigned>(frames.size()));
     return false;
   }
+  std::size_t total_bytes = 0;
   for (const auto& frame : frames) {
+    total_bytes += frame.size();
     struct os_mbuf* buffer = os_msys_get_pkthdr(frame.size(), 0);
     if (buffer == nullptr ||
         os_mbuf_append(buffer, frame.data(), frame.size()) != 0) {
@@ -835,11 +882,21 @@ bool BleNavTransport::notify_frames(
     const int result = ble_gatts_notify_custom(
         connection_handle_.load(), tx_value_handle_, buffer);
     if (result != 0) {
-      ESP_LOGW(kTag, "notification failed: rc=%d", result);
+      ESP_LOGW(kTag,
+               "notification failed rc=%d epoch=%u handle=%u frameBytes=%u "
+               "frames=%u",
+               result, connection_epoch_.load(), connection_handle_.load(),
+               static_cast<unsigned>(frame.size()),
+               static_cast<unsigned>(frames.size()));
       return false;
     }
   }
   last_tx_ms_.store(static_cast<std::uint32_t>(monotonic_ms()));
+  ESP_LOGI(kTag,
+           "TX notify ok epoch=%u handle=%u frames=%u bytes=%u",
+           connection_epoch_.load(), connection_handle_.load(),
+           static_cast<unsigned>(frames.size()),
+           static_cast<unsigned>(total_bytes));
   return true;
 }
 

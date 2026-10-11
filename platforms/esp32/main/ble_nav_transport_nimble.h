@@ -92,6 +92,7 @@ class BleNavTransport {
   int register_gatt_service();
   void advertise();
   void run_rx_worker();
+  void log_link_state(const char* reason) const;
   void note_link(bool active);
   void send_connection_status(moto::ble::ConnectionState state);
   void send_ack(std::uint16_t sequence,

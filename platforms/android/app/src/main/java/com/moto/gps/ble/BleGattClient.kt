@@ -37,6 +37,9 @@ private const val DEFAULT_FRAME_SIZE = 20
 private const val GATT_SUCCESS = 0
 private const val GATT_INSUFFICIENT_AUTHENTICATION = 5
 private const val GATT_INSUFFICIENT_ENCRYPTION = 15
+private const val GATT_START_REJECTED = -1
+private const val GATT_OPERATION_TIMEOUT_MS = 4_000L
+private const val MAX_PENDING_OPERATIONS = 64
 
 /** Android GATT central for the existing 1.85B firmware. */
 @SuppressLint("MissingPermission")
@@ -72,22 +75,36 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         }
     }
 
+    private data class GattStartResult(
+        val accepted: Boolean,
+        val statusCode: Int,
+    )
+
     private sealed interface GattOperation {
-        fun start(gatt: BluetoothGatt): Boolean
+        val description: String
+        fun start(gatt: BluetoothGatt): GattStartResult
     }
 
     private class DescriptorWrite(
         private val descriptor: BluetoothGattDescriptor,
         private val value: ByteArray,
     ) : GattOperation {
-        override fun start(gatt: BluetoothGatt): Boolean {
+        override val description: String
+            get() = "CCCD ${descriptor.uuid} bytes=${value.size}"
+
+        override fun start(gatt: BluetoothGatt): GattStartResult {
             return if (Build.VERSION.SDK_INT >= 33) {
-                gatt.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS
+                val status = gatt.writeDescriptor(descriptor, value)
+                GattStartResult(status == BluetoothStatusCodes.SUCCESS, status)
             } else {
                 @Suppress("DEPRECATION")
                 run {
                     descriptor.value = value
-                    gatt.writeDescriptor(descriptor)
+                    val accepted = gatt.writeDescriptor(descriptor)
+                    GattStartResult(
+                        accepted = accepted,
+                        statusCode = if (accepted) BluetoothStatusCodes.SUCCESS else GATT_START_REJECTED,
+                    )
                 }
             }
         }
@@ -98,15 +115,23 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         private val value: ByteArray,
         private val writeType: Int,
     ) : GattOperation {
-        override fun start(gatt: BluetoothGatt): Boolean {
+        override val description: String
+            get() = "RX write type=${writeTypeName(writeType)} bytes=${value.size}"
+
+        override fun start(gatt: BluetoothGatt): GattStartResult {
             return if (Build.VERSION.SDK_INT >= 33) {
-                gatt.writeCharacteristic(characteristic, value, writeType) == BluetoothStatusCodes.SUCCESS
+                val status = gatt.writeCharacteristic(characteristic, value, writeType)
+                GattStartResult(status == BluetoothStatusCodes.SUCCESS, status)
             } else {
                 @Suppress("DEPRECATION")
                 run {
                     characteristic.writeType = writeType
                     characteristic.value = value
-                    gatt.writeCharacteristic(characteristic)
+                    val accepted = gatt.writeCharacteristic(characteristic)
+                    GattStartResult(
+                        accepted = accepted,
+                        statusCode = if (accepted) BluetoothStatusCodes.SUCCESS else GATT_START_REJECTED,
+                    )
                 }
             }
         }
@@ -114,6 +139,9 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     private val pendingOperations = ArrayDeque<GattOperation>()
     private var activeOperation: GattOperation? = null
+    private var activeOperationId = 0L
+    private var activeOperationStartedAtMs = 0L
+    private var operationTimeoutRunnable: Runnable? = null
 
     private val session = com.moto.gps.ble.BleSessionController(
         codec = codec,
@@ -127,6 +155,9 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 BleLinkState.HANDSHAKING
             }
             updateState(linkState = uiState, protocolReady = state == ProtocolSessionState.READY, message = message)
+            if (state == ProtocolSessionState.FAILED) {
+                abortGatt("协议会话失败：$message")
+            }
         },
     )
 
@@ -237,6 +268,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             protocolReady = false,
             message = "正在连接 ${device.name ?: device.address}",
         )
+        Log.i(TAG, "connect start address=${device.address} bondState=${device.bondState}")
         gatt = if (Build.VERSION.SDK_INT >= 23) {
             device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
         } else {
@@ -278,20 +310,18 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             mainHandler.post {
                 if (!isCurrentGatt(gatt)) return@post
-                Log.i(TAG, "connection state address=${gatt.device.address} status=$status state=$newState")
+                Log.i(
+                    TAG,
+                    "connection state address=${gatt.device.address} status=$status " +
+                        "state=$newState pending=${pendingOperations.size} active=${activeOperation?.description}",
+                )
                 if (status != GATT_SUCCESS || newState != BluetoothProfile.STATE_CONNECTED) {
-                    fail("GATT 连接断开：status=$status state=$newState")
-                    session.stop()
-                    closeGattOnly(gatt)
-                    updateState(
-                        linkState = BleLinkState.ERROR,
-                        protocolReady = false,
-                        message = "GATT 连接断开：status=$status state=$newState",
-                    )
+                    abortGatt("GATT 连接断开：status=$status state=$newState")
                     return@post
                 }
                 updateState(linkState = BleLinkState.DISCOVERING, message = "已连接，正在发现服务")
-                gatt.discoverServices()
+                val accepted = gatt.discoverServices()
+                Log.i(TAG, "discoverServices accepted=$accepted")
             }
         }
 
@@ -333,6 +363,11 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                     fail("未找到 1.85B MOTO GPS 导航服务或特征；实际服务=${serviceSummary.ifBlank { "<空>" }}")
                     return@post
                 }
+                Log.i(
+                    TAG,
+                    "characteristics rx=${rxCharacteristic?.uuid} props=${rxCharacteristic?.properties} " +
+                        "tx=${txCharacteristic?.uuid} props=${txCharacteristic?.properties}",
+                )
                 requestMtu(gatt)
             }
         }
@@ -346,6 +381,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                     DEFAULT_FRAME_SIZE
                 }
                 codec.setMaximumFrameSize(frameSize)
+                Log.i(TAG, "mtu changed mtu=$mtu status=$status frameSize=$frameSize")
                 subscribeNotifications(gatt)
             }
         }
@@ -357,6 +393,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         ) {
             mainHandler.post {
                 if (!isCurrentGatt(gatt)) return@post
+                Log.i(TAG, "descriptor write callback uuid=${descriptor.uuid} status=$status")
                 completeOperation(status, descriptor)
             }
         }
@@ -368,7 +405,25 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         ) {
             mainHandler.post {
                 if (!isCurrentGatt(gatt)) return@post
+                Log.i(TAG, "characteristic write callback uuid=${characteristic.uuid} status=$status")
                 completeOperation(status, characteristic)
+            }
+        }
+
+        override fun onConnectionUpdated(
+            gatt: BluetoothGatt,
+            interval: Int,
+            latency: Int,
+            timeout: Int,
+            status: Int,
+        ) {
+            mainHandler.post {
+                if (!isCurrentGatt(gatt)) return@post
+                Log.i(
+                    TAG,
+                    "connection updated intervalUnits=$interval latency=$latency " +
+                        "supervisionTimeoutUnits=$timeout status=$status",
+                )
             }
         }
 
@@ -391,7 +446,9 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     private fun requestMtu(gatt: BluetoothGatt) {
         updateState(linkState = BleLinkState.NEGOTIATING_MTU, message = "协商 BLE MTU")
-        if (!gatt.requestMtu(MAX_REQUESTED_MTU)) {
+        val accepted = gatt.requestMtu(MAX_REQUESTED_MTU)
+        Log.i(TAG, "requestMtu requested=$MAX_REQUESTED_MTU accepted=$accepted")
+        if (!accepted) {
             frameSize = DEFAULT_FRAME_SIZE
             codec.setMaximumFrameSize(frameSize)
             subscribeNotifications(gatt)
@@ -421,6 +478,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             fail("本地启用 TX 通知失败")
             return
         }
+        Log.i(TAG, "local TX notification enabled; writing CCCD=${descriptor.uuid}")
         updateState(linkState = BleLinkState.SUBSCRIBING, message = "订阅 TX Notify，必要时触发配对")
         enqueue(DescriptorWrite(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE))
     }
@@ -429,6 +487,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         mainHandler.post {
             if (!isCurrentGatt(callbackGatt)) return@post
             val event = codec.pushDeviceFrame(value, android.os.SystemClock.elapsedRealtime())
+            Log.i(TAG, "TX notify received bytes=${value.size} event=${event::class.simpleName}")
             session.onDeviceEvent(event)
             if (event is com.moto.gps.protocol.NativeBleEvent.DeviceMessage &&
                 event.ackRequested && event.sequence != 0
@@ -456,30 +515,98 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             } else {
                 BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             }
+            val inFlight = if (activeOperation != null) 1 else 0
+            if (inFlight + pendingOperations.size + frames.size > MAX_PENDING_OPERATIONS) {
+                Log.e(
+                    TAG,
+                    "GATT queue overflow pending=${pendingOperations.size} active=$inFlight " +
+                        "incoming=${frames.size} withResponse=$withResponse",
+                )
+                abortGatt("GATT 发送队列溢出，已主动断开以重新握手")
+                return@post
+            }
+            Log.i(
+                TAG,
+                "enqueue frames count=${frames.size} bytes=${frames.sumOf { it.size }} " +
+                    "withResponse=$withResponse queueBefore=${pendingOperations.size} " +
+                    "active=${activeOperation?.description}",
+            )
             frames.forEach { pendingOperations.add(CharacteristicWrite(characteristic, it, type)) }
             pumpQueue()
         }
     }
 
     private fun enqueue(operation: GattOperation) {
+        val inFlight = if (activeOperation == null) 0 else 1
+        if (inFlight + pendingOperations.size + 1 > MAX_PENDING_OPERATIONS) {
+            Log.e(TAG, "GATT queue overflow operation=${operation.description}")
+            abortGatt("GATT 操作队列溢出，已主动断开以重新握手")
+            return
+        }
+        Log.i(TAG, "enqueue operation=${operation.description} queueBefore=${pendingOperations.size}")
         pendingOperations.add(operation)
         pumpQueue()
     }
 
     private fun pumpQueue() {
-        if (activeOperation != null) return
+        if (activeOperation != null) {
+            Log.d(TAG, "GATT queue blocked active=${activeOperation?.description} pending=${pendingOperations.size}")
+            return
+        }
         if (pendingOperations.isEmpty()) return
         val operation = pendingOperations.removeFirst()
-        val currentGatt = gatt ?: return fail("GATT 已断开，清理发送队列")
+        val currentGatt = gatt ?: return abortGatt("GATT 已断开，清理发送队列")
         activeOperation = operation
-        if (!operation.start(currentGatt)) {
-            activeOperation = null
-            handleGattFailure(GATT_INSUFFICIENT_AUTHENTICATION)
+        val operationId = ++activeOperationId
+        activeOperationStartedAtMs = android.os.SystemClock.elapsedRealtime()
+        Log.i(
+            TAG,
+            "GATT op start id=$operationId ${operation.description} pending=${pendingOperations.size}",
+        )
+        val result = try {
+            operation.start(currentGatt)
+        } catch (error: RuntimeException) {
+            Log.e(TAG, "GATT op start threw id=$operationId ${operation.description}", error)
+            GattStartResult(accepted = false, statusCode = GATT_START_REJECTED)
         }
+        Log.i(
+            TAG,
+            "GATT op accepted id=$operationId accepted=${result.accepted} " +
+                "status=${result.statusCode} ${operation.description}",
+        )
+        if (!result.accepted) {
+            activeOperation = null
+            handleGattFailure(result.statusCode, "immediate start rejected: ${operation.description}")
+            return
+        }
+        val timeout = Runnable {
+            if (activeOperationId != operationId || activeOperation !== operation) return@Runnable
+            val elapsed = android.os.SystemClock.elapsedRealtime() - activeOperationStartedAtMs
+            Log.e(
+                TAG,
+                "GATT op timeout id=$operationId elapsed=${elapsed}ms " +
+                    "${operation.description} pending=${pendingOperations.size}",
+            )
+            abortGatt("GATT 操作超时：${operation.description}，已断开并等待重新连接")
+        }
+        operationTimeoutRunnable = timeout
+        mainHandler.postDelayed(timeout, GATT_OPERATION_TIMEOUT_MS)
     }
 
     private fun completeOperation(status: Int, callbackObject: Any) {
-        val operation = activeOperation ?: return
+        val operation = activeOperation
+        if (operation == null) {
+            Log.w(TAG, "unexpected GATT operation callback status=$status object=${callbackObject::class.simpleName}")
+            return
+        }
+        operationTimeoutRunnable?.let(mainHandler::removeCallbacks)
+        operationTimeoutRunnable = null
+        val elapsed = android.os.SystemClock.elapsedRealtime() - activeOperationStartedAtMs
+        Log.i(
+            TAG,
+            "GATT op complete id=$activeOperationId status=$status elapsed=${elapsed}ms " +
+                "${operation.description} pending=${pendingOperations.size}",
+        )
         activeOperation = null
         if (status == GATT_SUCCESS) {
             pumpQueue()
@@ -488,11 +615,12 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 session.start(frameSize)
             }
         } else {
-            handleGattFailure(status)
+            handleGattFailure(status, "callback: ${operation.description}")
         }
     }
 
-    private fun handleGattFailure(status: Int) {
+    private fun handleGattFailure(status: Int, detail: String) {
+        Log.e(TAG, "GATT operation failure status=$status detail=$detail")
         if (status == GATT_INSUFFICIENT_AUTHENTICATION || status == GATT_INSUFFICIENT_ENCRYPTION) {
             pendingOperations.clear()
             authRetryPending = true
@@ -504,7 +632,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 gatt?.discoverServices()
             }
         } else {
-            fail("GATT 操作失败：$status")
+            abortGatt("GATT 操作失败：status=$status；$detail")
         }
     }
 
@@ -534,8 +662,17 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             expectedGatt.close()
             return
         }
+        operationTimeoutRunnable?.let(mainHandler::removeCallbacks)
+        operationTimeoutRunnable = null
+        if (pendingOperations.isNotEmpty() || activeOperation != null) {
+            Log.i(
+                TAG,
+                "clear GATT queue pending=${pendingOperations.size} active=${activeOperation?.description}",
+            )
+        }
         pendingOperations.clear()
         activeOperation = null
+        activeOperationStartedAtMs = 0L
         currentGatt?.close()
         gatt = null
         rxCharacteristic = null
@@ -599,6 +736,30 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     }
 
     private fun fail(message: String) {
+        Log.e(TAG, "BLE failure: $message")
         updateState(linkState = BleLinkState.ERROR, protocolReady = false, message = message)
     }
+
+    private fun abortGatt(message: String) {
+        Log.e(
+            TAG,
+            "abort GATT: $message pending=${pendingOperations.size} active=${activeOperation?.description}",
+        )
+        session.stop()
+        val currentGatt = gatt
+        try {
+            currentGatt?.disconnect()
+        } catch (error: RuntimeException) {
+            Log.w(TAG, "disconnect during abort failed", error)
+        }
+        closeGattOnly(currentGatt)
+        updateState(linkState = BleLinkState.ERROR, protocolReady = false, message = message)
+    }
+}
+
+private fun writeTypeName(writeType: Int): String = when (writeType) {
+    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT -> "with-response"
+    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE -> "without-response"
+    BluetoothGattCharacteristic.WRITE_TYPE_SIGNED -> "signed"
+    else -> "unknown($writeType)"
 }

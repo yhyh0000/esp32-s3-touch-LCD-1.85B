@@ -74,6 +74,27 @@ CI 会从干净检出拉取子模块，并安装固定的 SDK、NDK 和 CMake �
 已通过；同一提交的 [Source checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38124607466)
 也已通过。验证范围是干净 CI 环境中的编译、JNI/CMake、单元测试、lint 和 Debug APK 打包，不等于真机验收。
 
+## BLE 故障日志
+
+当前 BLE 稳定性修复会输出以下可对时日志：
+
+- Android `MotoBleGatt`：连接状态、服务/特征、MTU、CCCD、连接参数、每个 GATT 操作的队列序号、立即返回码、回调返回码、耗时、队列长度和超时。
+- Android `MotoBleSession`：会话 ID、握手状态、设备事件、设备心跳静默时长和手机发送心跳。
+- ESP32 `moto_ble`：connection epoch、连接句柄、加密/Notify 订阅状态、ATT MTU、手机 RX 帧、设备 TX Notify、Notify 返回码、RX 队列溢出和手机心跳 watchdog。
+- ESP32 `board_1_85b`：CST816S I²C 错误按 1 秒节流，但保留累计次数，避免触摸总线错误淹没 BLE 时间线。
+
+真机连接后可用 ADB 保存 Android 侧日志：
+
+```powershell
+adb logcat -c
+adb logcat -v threadtime MotoBleGatt:I MotoBleSession:I BluetoothGatt:D *:S > vivo-moto-ble.log
+```
+
+板子串口日志需与 Android 日志使用同一轮测试编号对齐；重点搜索 `GATT op timeout`、
+`device heartbeat timeout`、`phone heartbeat timeout`、`notification failed`、`phone disconnected`。
+Android 心跳已改为 Write With Response，目的是让 vivo 的手机→板子写入卡死能被操作超时检测到，
+而不是让队列永久保持 READY。超时后会清理 GATT、结束会话并等待重新连接。
+
 ## 权限与未验证项
 
 第一阶段申请 Android 12+ 的 `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`，旧系统申请精确定位用于
