@@ -1,4 +1,5 @@
 name: Build ESP32-S3 Touch LCD 1.85B firmware
+
 on:
   workflow_dispatch:
   push:
@@ -8,8 +9,10 @@ on:
       - "platforms/esp32/**"
       - "shared/**"
       - "third_party/lvgl/**"
+
 permissions:
   contents: read
+
 jobs:
   build:
     name: Build ESP32 firmware
@@ -21,6 +24,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
+
       - name: Build firmware
         shell: bash
         run: |
@@ -29,7 +33,8 @@ jobs:
           cd platforms/esp32
           idf.py set-target esp32s3
           idf.py build
-          idf.py merge-bin -o build/moto-gps-1.85b-merged.bin
+          idf.py merge-bin -o moto-gps-1.85b-merged.bin
+
       - name: Upload flashable firmware
         uses: actions/upload-artifact@v4
         with:
