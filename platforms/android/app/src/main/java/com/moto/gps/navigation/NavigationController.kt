@@ -4,6 +4,7 @@ import android.content.Context
 import com.moto.gps.ble.BleGattClient
 import com.moto.gps.protocol.CoordinateSystem
 import com.moto.gps.protocol.DisplayPage
+import com.moto.gps.protocol.GeoPointE6
 import com.moto.gps.protocol.Maneuver
 import com.moto.gps.protocol.NavigationSnapshot
 import com.moto.gps.protocol.NavigationState
