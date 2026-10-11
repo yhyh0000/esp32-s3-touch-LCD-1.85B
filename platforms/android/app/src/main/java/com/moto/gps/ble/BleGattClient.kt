@@ -61,6 +61,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     private var txCharacteristic: BluetoothGattCharacteristic? = null
     private var frameSize = DEFAULT_FRAME_SIZE
     private var authRetryPending = false
+    private var cacheRefreshAttempted = false
     private var closed = false
 
     private val heartbeatTick = object : Runnable {
@@ -217,9 +218,16 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     }
 
     fun connect(device: BluetoothDevice) {
+        connectInternal(device, resetCacheRefresh = true)
+    }
+
+    private fun connectInternal(device: BluetoothDevice, resetCacheRefresh: Boolean) {
         if (!hasConnectPermission()) {
             fail("缺少 BLE 连接权限")
             return
+        }
+        if (resetCacheRefresh) {
+            cacheRefreshAttempted = false
         }
         stopScan()
         closeGattOnly()
@@ -295,6 +303,25 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 rxCharacteristic = service?.getCharacteristic(MotoBleUuids.phoneToDevice)
                 txCharacteristic = service?.getCharacteristic(MotoBleUuids.deviceToPhone)
                 if (service == null || rxCharacteristic == null || txCharacteristic == null) {
+                    if (!cacheRefreshAttempted && refreshGattCache(gatt)) {
+                        cacheRefreshAttempted = true
+                        val device = gatt.device
+                        updateState(
+                            linkState = BleLinkState.DISCOVERING,
+                            protocolReady = false,
+                            message = "发现旧 GATT 服务，已刷新缓存并重连",
+                        )
+                        gatt.disconnect()
+                        gatt.close()
+                        if (this@BleGattClient.gatt === gatt) {
+                            this@BleGattClient.gatt = null
+                        }
+                        mainHandler.postDelayed(
+                            { connectInternal(device, resetCacheRefresh = false) },
+                            700L,
+                        )
+                        return@post
+                    }
                     fail("未找到 1.85B MOTO GPS 导航服务或特征；实际服务=${serviceSummary.ifBlank { "<空>" }}")
                     return@post
                 }
@@ -353,6 +380,21 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             frameSize = DEFAULT_FRAME_SIZE
             codec.setMaximumFrameSize(frameSize)
             subscribeNotifications(gatt)
+        }
+    }
+
+    private fun refreshGattCache(gatt: BluetoothGatt): Boolean {
+        return try {
+            val refresh = gatt.javaClass.getMethod("refresh")
+            val result = refresh.invoke(gatt) as? Boolean ?: false
+            Log.i(TAG, "refresh GATT cache result=$result")
+            result
+        } catch (error: ReflectiveOperationException) {
+            Log.w(TAG, "refresh GATT cache unavailable", error)
+            false
+        } catch (error: SecurityException) {
+            Log.w(TAG, "refresh GATT cache denied", error)
+            false
         }
     }
 
