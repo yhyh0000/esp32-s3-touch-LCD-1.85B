@@ -1,0 +1,40 @@
+name: Build ESP32-S3 Touch LCD 1.85B firmware
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/esp32-firmware.yml"
+      - ".gitmodules"
+      - "platforms/esp32/**"
+      - "shared/**"
+      - "third_party/lvgl/**"
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build ESP32 firmware
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.5
+    steps:
+      - name: Checkout with LVGL submodule
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+      - name: Build firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /opt/esp/idf/export.sh
+          cd platforms/esp32
+          idf.py set-target esp32s3
+          idf.py build
+          idf.py merge-bin -o build/moto-gps-1.85b-merged.bin
+      - name: Upload flashable firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: moto-gps-esp32s3-1.85b
+          if-no-files-found: error
+          path: |
+            platforms/esp32/build/moto-gps-1.85b-merged.bin
+            platforms/esp32/build/*.bin
