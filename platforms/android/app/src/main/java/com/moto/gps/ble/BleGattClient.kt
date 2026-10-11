@@ -410,23 +410,6 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             }
         }
 
-        override fun onConnectionUpdated(
-            gatt: BluetoothGatt,
-            interval: Int,
-            latency: Int,
-            timeout: Int,
-            status: Int,
-        ) {
-            mainHandler.post {
-                if (!isCurrentGatt(gatt)) return@post
-                Log.i(
-                    TAG,
-                    "connection updated intervalUnits=$interval latency=$latency " +
-                        "supervisionTimeoutUnits=$timeout status=$status",
-                )
-            }
-        }
-
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
