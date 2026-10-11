@@ -248,8 +248,9 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     fun disconnect() {
         mainHandler.post {
             session.stop()
-            gatt?.disconnect()
-            closeGattOnly()
+            val currentGatt = gatt
+            currentGatt?.disconnect()
+            closeGattOnly(currentGatt)
             updateState(linkState = BleLinkState.IDLE, protocolReady = false, message = "已断开")
         }
     }
@@ -276,11 +277,17 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             mainHandler.post {
+                if (!isCurrentGatt(gatt)) return@post
                 Log.i(TAG, "connection state address=${gatt.device.address} status=$status state=$newState")
                 if (status != GATT_SUCCESS || newState != BluetoothProfile.STATE_CONNECTED) {
                     fail("GATT 连接断开：status=$status state=$newState")
                     session.stop()
-                    closeGattOnly()
+                    closeGattOnly(gatt)
+                    updateState(
+                        linkState = BleLinkState.ERROR,
+                        protocolReady = false,
+                        message = "GATT 连接断开：status=$status state=$newState",
+                    )
                     return@post
                 }
                 updateState(linkState = BleLinkState.DISCOVERING, message = "已连接，正在发现服务")
@@ -290,6 +297,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             mainHandler.post {
+                if (!isCurrentGatt(gatt)) return@post
                 val serviceSummary = gatt.services.orEmpty().joinToString(";") { service ->
                     val characteristics = service.characteristics.joinToString(",") { it.uuid.toString() }
                     "${service.uuid}[$characteristics]"
@@ -331,6 +339,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             mainHandler.post {
+                if (!isCurrentGatt(gatt)) return@post
                 frameSize = if (status == GATT_SUCCESS) {
                     (mtu - 3).coerceIn(DEFAULT_FRAME_SIZE, 512)
                 } else {
@@ -346,7 +355,10 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
-            mainHandler.post { completeOperation(status, descriptor) }
+            mainHandler.post {
+                if (!isCurrentGatt(gatt)) return@post
+                completeOperation(status, descriptor)
+            }
         }
 
         override fun onCharacteristicWrite(
@@ -354,7 +366,10 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            mainHandler.post { completeOperation(status, characteristic) }
+            mainHandler.post {
+                if (!isCurrentGatt(gatt)) return@post
+                completeOperation(status, characteristic)
+            }
         }
 
         @Suppress("DEPRECATION")
@@ -362,7 +377,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
-            onNotification(characteristic.value ?: byteArrayOf())
+            onNotification(gatt, characteristic.value ?: byteArrayOf())
         }
 
         override fun onCharacteristicChanged(
@@ -370,7 +385,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
-            onNotification(value)
+            onNotification(gatt, value)
         }
     }
 
@@ -410,8 +425,9 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         enqueue(DescriptorWrite(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE))
     }
 
-    private fun onNotification(value: ByteArray) {
+    private fun onNotification(callbackGatt: BluetoothGatt, value: ByteArray) {
         mainHandler.post {
+            if (!isCurrentGatt(callbackGatt)) return@post
             val event = codec.pushDeviceFrame(value, android.os.SystemClock.elapsedRealtime())
             session.onDeviceEvent(event)
             if (event is com.moto.gps.protocol.NativeBleEvent.DeviceMessage &&
@@ -509,14 +525,31 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         }
     }
 
-    private fun closeGattOnly() {
+    private fun closeGattOnly(expectedGatt: BluetoothGatt? = null) {
+        val currentGatt = gatt
+        if (expectedGatt != null && currentGatt !== expectedGatt) {
+            // A delayed callback from an older connection must never close the
+            // replacement GATT instance. It is safe to close only that stale
+            // callback object.
+            expectedGatt.close()
+            return
+        }
         pendingOperations.clear()
         activeOperation = null
-        gatt?.close()
+        currentGatt?.close()
         gatt = null
         rxCharacteristic = null
         txCharacteristic = null
         authRetryPending = false
+    }
+
+    private fun isCurrentGatt(callbackGatt: BluetoothGatt): Boolean {
+        if (!closed && gatt === callbackGatt) return true
+        if (closed || gatt !== callbackGatt) {
+            Log.w(TAG, "ignoring stale GATT callback address=${callbackGatt.device.address}")
+            callbackGatt.close()
+        }
+        return false
     }
 
     private fun hasScanPermission(): Boolean {
