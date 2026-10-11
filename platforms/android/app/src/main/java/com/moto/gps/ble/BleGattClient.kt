@@ -15,7 +15,6 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
-import android.util.Log
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -154,6 +153,11 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             } else {
                 BleLinkState.HANDSHAKING
             }
+            BleDiagnostics.i(
+                "MotoBleSession",
+                "state changed state=$state mappedLinkState=$uiState " +
+                    "protocolReady=${state == ProtocolSessionState.READY} message=$message",
+            )
             updateState(linkState = uiState, protocolReady = state == ProtocolSessionState.READY, message = message)
             if (state == ProtocolSessionState.FAILED) {
                 abortGatt("协议会话失败：$message")
@@ -195,6 +199,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     }
 
     fun startScan() {
+        BleDiagnostics.i(TAG, "scan requested")
         if (!hasScanPermission()) {
             fail("缺少 BLE 扫描权限")
             return
@@ -211,6 +216,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         }
         stopScan()
         updateState(linkState = BleLinkState.SCANNING, devices = emptyList(), message = "正在扫描 MOTO GPS")
+        BleDiagnostics.i(TAG, "scan started durationMs=$SCAN_DURATION_MS service=${MotoBleUuids.service}")
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
@@ -230,9 +236,13 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 )
                 val current = _uiState.value.devices.filterNot { it.address == item.address }
                 updateState(devices = (current + item).sortedByDescending { it.rssi })
+                if (current.size == _uiState.value.devices.size) {
+                    BleDiagnostics.i(TAG, "scan result name=${item.name} address=${item.address} rssi=${item.rssi}")
+                }
             }
 
             override fun onScanFailed(errorCode: Int) {
+                BleDiagnostics.e(TAG, "scan failed errorCode=$errorCode")
                 fail("BLE 扫描失败：$errorCode")
             }
         }
@@ -269,6 +279,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             message = "正在连接 ${device.name ?: device.address}",
         )
         Log.i(TAG, "connect start address=${device.address} bondState=${device.bondState}")
+        BleDiagnostics.i(TAG, "connect start address=${device.address} bondState=${device.bondState}")
         gatt = if (Build.VERSION.SDK_INT >= 23) {
             device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
         } else {
@@ -279,6 +290,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     fun disconnect() {
         mainHandler.post {
+            BleDiagnostics.i(TAG, "user disconnect requested address=${gatt?.device?.address}")
             session.stop()
             val currentGatt = gatt
             currentGatt?.disconnect()
@@ -298,6 +310,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     override fun close() {
         if (closed) return
         closed = true
+        BleDiagnostics.i(TAG, "client close")
         stopScan()
         context.unregisterReceiver(bondReceiver)
         mainHandler.removeCallbacks(heartbeatTick)
@@ -315,12 +328,18 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                     "connection state address=${gatt.device.address} status=$status " +
                         "state=$newState pending=${pendingOperations.size} active=${activeOperation?.description}",
                 )
+                BleDiagnostics.i(
+                    TAG,
+                    "connection state address=${gatt.device.address} status=$status state=$newState " +
+                        "pending=${pendingOperations.size} active=${activeOperation?.description}",
+                )
                 if (status != GATT_SUCCESS || newState != BluetoothProfile.STATE_CONNECTED) {
                     abortGatt("GATT 连接断开：status=$status state=$newState")
                     return@post
                 }
                 updateState(linkState = BleLinkState.DISCOVERING, message = "已连接，正在发现服务")
                 val accepted = gatt.discoverServices()
+                BleDiagnostics.i(TAG, "discoverServices accepted=$accepted")
                 Log.i(TAG, "discoverServices accepted=$accepted")
             }
         }
@@ -333,6 +352,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                     "${service.uuid}[$characteristics]"
                 }
                 Log.i(TAG, "services discovered status=$status services=$serviceSummary")
+                BleDiagnostics.i(TAG, "services discovered status=$status services=$serviceSummary")
                 if (status != GATT_SUCCESS) {
                     fail("服务发现失败：$status")
                     return@post
@@ -382,6 +402,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 }
                 codec.setMaximumFrameSize(frameSize)
                 Log.i(TAG, "mtu changed mtu=$mtu status=$status frameSize=$frameSize")
+                BleDiagnostics.i(TAG, "mtu changed mtu=$mtu status=$status frameSize=$frameSize")
                 subscribeNotifications(gatt)
             }
         }
@@ -394,6 +415,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             mainHandler.post {
                 if (!isCurrentGatt(gatt)) return@post
                 Log.i(TAG, "descriptor write callback uuid=${descriptor.uuid} status=$status")
+                BleDiagnostics.i(TAG, "descriptor write callback uuid=${descriptor.uuid} status=$status")
                 completeOperation(status, descriptor)
             }
         }
@@ -406,6 +428,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             mainHandler.post {
                 if (!isCurrentGatt(gatt)) return@post
                 Log.i(TAG, "characteristic write callback uuid=${characteristic.uuid} status=$status")
+                BleDiagnostics.i(TAG, "characteristic write callback uuid=${characteristic.uuid} status=$status")
                 completeOperation(status, characteristic)
             }
         }
@@ -431,6 +454,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         updateState(linkState = BleLinkState.NEGOTIATING_MTU, message = "协商 BLE MTU")
         val accepted = gatt.requestMtu(MAX_REQUESTED_MTU)
         Log.i(TAG, "requestMtu requested=$MAX_REQUESTED_MTU accepted=$accepted")
+        BleDiagnostics.i(TAG, "requestMtu requested=$MAX_REQUESTED_MTU accepted=$accepted")
         if (!accepted) {
             frameSize = DEFAULT_FRAME_SIZE
             codec.setMaximumFrameSize(frameSize)
@@ -462,6 +486,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             return
         }
         Log.i(TAG, "local TX notification enabled; writing CCCD=${descriptor.uuid}")
+        BleDiagnostics.i(TAG, "local TX notification enabled; writing CCCD=${descriptor.uuid}")
         updateState(linkState = BleLinkState.SUBSCRIBING, message = "订阅 TX Notify，必要时触发配对")
         enqueue(DescriptorWrite(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE))
     }
@@ -471,6 +496,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             if (!isCurrentGatt(callbackGatt)) return@post
             val event = codec.pushDeviceFrame(value, android.os.SystemClock.elapsedRealtime())
             Log.i(TAG, "TX notify received bytes=${value.size} event=${event::class.simpleName}")
+            BleDiagnostics.i(TAG, "TX notify received bytes=${value.size} event=${event::class.simpleName}")
             session.onDeviceEvent(event)
             if (event is com.moto.gps.protocol.NativeBleEvent.DeviceMessage &&
                 event.ackRequested && event.sequence != 0
@@ -514,6 +540,12 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                     "withResponse=$withResponse queueBefore=${pendingOperations.size} " +
                     "active=${activeOperation?.description}",
             )
+            BleDiagnostics.i(
+                TAG,
+                "enqueue frames count=${frames.size} bytes=${frames.sumOf { it.size }} " +
+                    "withResponse=$withResponse queueBefore=${pendingOperations.size} " +
+                    "active=${activeOperation?.description}",
+            )
             frames.forEach { pendingOperations.add(CharacteristicWrite(characteristic, it, type)) }
             pumpQueue()
         }
@@ -527,6 +559,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
             return
         }
         Log.i(TAG, "enqueue operation=${operation.description} queueBefore=${pendingOperations.size}")
+        BleDiagnostics.i(TAG, "enqueue operation=${operation.description} queueBefore=${pendingOperations.size}")
         pendingOperations.add(operation)
         pumpQueue()
     }
@@ -543,6 +576,10 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         val operationId = ++activeOperationId
         activeOperationStartedAtMs = android.os.SystemClock.elapsedRealtime()
         Log.i(
+            TAG,
+            "GATT op start id=$operationId ${operation.description} pending=${pendingOperations.size}",
+        )
+        BleDiagnostics.i(
             TAG,
             "GATT op start id=$operationId ${operation.description} pending=${pendingOperations.size}",
         )
@@ -570,6 +607,11 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 "GATT op timeout id=$operationId elapsed=${elapsed}ms " +
                     "${operation.description} pending=${pendingOperations.size}",
             )
+        BleDiagnostics.i(
+            TAG,
+            "GATT op complete id=$activeOperationId status=$status elapsed=${elapsed}ms " +
+                "${operation.description} pending=${pendingOperations.size}",
+        )
             abortGatt("GATT 操作超时：${operation.description}，已断开并等待重新连接")
         }
         operationTimeoutRunnable = timeout
@@ -604,6 +646,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     private fun handleGattFailure(status: Int, detail: String) {
         Log.e(TAG, "GATT operation failure status=$status detail=$detail")
+        BleDiagnostics.e(TAG, "GATT operation failure status=$status detail=$detail")
         if (status == GATT_INSUFFICIENT_AUTHENTICATION || status == GATT_INSUFFICIENT_ENCRYPTION) {
             pendingOperations.clear()
             authRetryPending = true
@@ -720,11 +763,16 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     private fun fail(message: String) {
         Log.e(TAG, "BLE failure: $message")
+        BleDiagnostics.e(TAG, "BLE failure: $message")
         updateState(linkState = BleLinkState.ERROR, protocolReady = false, message = message)
     }
 
     private fun abortGatt(message: String) {
         Log.e(
+            TAG,
+            "abort GATT: $message pending=${pendingOperations.size} active=${activeOperation?.description}",
+        )
+        BleDiagnostics.e(
             TAG,
             "abort GATT: $message pending=${pendingOperations.size} active=${activeOperation?.description}",
         )

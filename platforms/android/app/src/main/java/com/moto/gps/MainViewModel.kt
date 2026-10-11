@@ -3,6 +3,7 @@ package com.moto.gps
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.moto.gps.ble.BleGattClient
+import com.moto.gps.ble.BleDiagnostics
 import com.moto.gps.ble.BleUiState
 import com.moto.gps.protocol.NativeBleCodec
 import kotlinx.coroutines.flow.StateFlow
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val client = BleGattClient(application.applicationContext)
     val uiState: StateFlow<BleUiState> = client.uiState
+    val diagnostics: StateFlow<List<String>> = BleDiagnostics.entries
 
     fun scan() = client.startScan()
 
@@ -20,6 +22,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnect() = client.disconnect()
+
+    fun clearDiagnostics() = BleDiagnostics.clear()
+
+    fun diagnosticsText(): String = BleDiagnostics.copyText()
 
     fun runProtocolSelfCheck() {
         val result = runCatching {

@@ -90,6 +90,12 @@ adb logcat -c
 adb logcat -v threadtime MotoBleGatt:I MotoBleSession:I BluetoothGatt:D *:S > vivo-moto-ble.log
 ```
 
+最新测试 APK 还提供了“BLE 诊断日志”面板。测试一轮前先点“清空”，然后扫描、连接，
+等板子状态变化或断开后点“复制日志”，把剪贴板全文发回。面板保留最近 500 条，包含本地
+时间、`elapsedRealtime`、GATT 状态、服务发现、MTU、CCCD、通知、握手、ACK、队列和超时；
+同一批事件仍会写入 `MotoBleGatt` / `MotoBleSession` Logcat。日志只保存在当前 App 进程内，
+不上传服务器。
+
 板子串口日志需与 Android 日志使用同一轮测试编号对齐；重点搜索 `GATT op timeout`、
 `device heartbeat timeout`、`phone heartbeat timeout`、`notification failed`、`phone disconnected`。
 Android 心跳已改为 Write With Response，目的是让 vivo 的手机→板子写入卡死能被操作超时检测到，

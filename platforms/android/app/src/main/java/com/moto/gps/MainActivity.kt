@@ -49,8 +49,10 @@ class MainActivity : ComponentActivity() {
 @androidx.compose.runtime.Composable
 private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val diagnostics by viewModel.diagnostics.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     var permissionMessage by remember { mutableStateOf("") }
+    var showDiagnostics by remember { mutableStateOf(true) }
     val permissions = remember { requiredPermissions() }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -99,6 +101,56 @@ private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
                 Text("共享核心自检：${uiState.protocolSelfCheck}")
                 Spacer(Modifier.height(4.dp))
                 Text("当前阶段只验证 BLE 与协议握手，尚未发送路线或模拟位置。")
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("BLE 诊断日志（${diagnostics.size}/500）")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                            Text(if (showDiagnostics) "收起" else "展开")
+                        }
+                        OutlinedButton(onClick = viewModel::clearDiagnostics) {
+                            Text("清空")
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            val clipboard = context.getSystemService(
+                                android.content.ClipboardManager::class.java,
+                            )
+                            clipboard?.setPrimaryClip(
+                                android.content.ClipData.newPlainText(
+                                    "MOTO GPS BLE diagnostics",
+                                    viewModel.diagnosticsText(),
+                                ),
+                            )
+                        },
+                    ) {
+                        Text("复制日志")
+                    }
+                    Text(
+                        "先清空，再连接一次，断开后复制全部日志",
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
+                if (showDiagnostics) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().height(260.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        items(diagnostics) { line ->
+                            Text(line, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
         }
 

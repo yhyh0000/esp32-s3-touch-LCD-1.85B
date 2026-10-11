@@ -1,7 +1,6 @@
 package com.moto.gps.ble
 
 import android.os.SystemClock
-import android.util.Log
 import com.moto.gps.protocol.ConnectionState
 import com.moto.gps.protocol.NativeBleCodec
 import com.moto.gps.protocol.NativeBleEvent
@@ -57,6 +56,11 @@ class BleSessionController(
             "start session=${sessionId.toString(16)} frameSize=${this.localMaximumFrameSize} " +
                 "heartbeatMs=$heartbeatIntervalMs",
         )
+        BleDiagnostics.i(
+            TAG,
+            "start session=${sessionId.toString(16)} frameSize=${this.localMaximumFrameSize} " +
+                "heartbeatMs=$heartbeatIntervalMs",
+        )
         onStateChanged(state, "已订阅 TX，发送 Phone Starting")
         sendFrames(
             codec.encodeConnectionStatus(ConnectionState.STARTING, sessionId),
@@ -69,6 +73,11 @@ class BleSessionController(
             lastDeviceFrameAtMs = nowElapsedMs()
         }
         Log.i(
+            TAG,
+            "device event=${event::class.simpleName} state=$state " +
+                "lastDeviceFrameAtMs=$lastDeviceFrameAtMs",
+        )
+        BleDiagnostics.i(
             TAG,
             "device event=${event::class.simpleName} state=$state " +
                 "lastDeviceFrameAtMs=$lastDeviceFrameAtMs",
@@ -98,6 +107,11 @@ class BleSessionController(
                 "device heartbeat timeout silenceMs=$deviceSilenceMs " +
                     "heartbeatMs=$heartbeatIntervalMs session=${sessionId.toString(16)}",
             )
+            BleDiagnostics.e(
+                TAG,
+                "device heartbeat timeout silenceMs=$deviceSilenceMs " +
+                    "heartbeatMs=$heartbeatIntervalMs session=${sessionId.toString(16)}",
+            )
             fail("设备心跳超时：${deviceSilenceMs}ms 未收到有效帧")
             return
         }
@@ -112,12 +126,18 @@ class BleSessionController(
             "send heartbeat session=${sessionId.toString(16)} elapsedMs=$elapsed " +
                 "nextInMs=$heartbeatIntervalMs",
         )
+        BleDiagnostics.i(
+            TAG,
+            "send heartbeat session=${sessionId.toString(16)} elapsedMs=$elapsed " +
+                "nextInMs=$heartbeatIntervalMs",
+        )
         sendFrames(codec.encodeHeartbeat(sessionId, elapsed), true)
         nextHeartbeatAtMs = now + heartbeatIntervalMs
     }
 
     fun stop() {
         Log.i(TAG, "stop session=${sessionId.toString(16)} state=$state")
+        BleDiagnostics.i(TAG, "stop session=${sessionId.toString(16)} state=$state")
         state = ProtocolSessionState.IDLE
         sessionId = 0u
         nextHeartbeatAtMs = Long.MAX_VALUE
@@ -128,6 +148,11 @@ class BleSessionController(
 
     private fun onConnectionStatus(event: NativeBleEvent.ConnectionStatus) {
         Log.i(
+            TAG,
+            "device status role=${event.role} state=${event.state} session=${event.sessionId.toString(16)} " +
+                "maxFrame=${event.maximumFrameSize} heartbeatMs=${event.heartbeatIntervalMs}",
+        )
+        BleDiagnostics.i(
             TAG,
             "device status role=${event.role} state=${event.state} session=${event.sessionId.toString(16)} " +
                 "maxFrame=${event.maximumFrameSize} heartbeatMs=${event.heartbeatIntervalMs}",
@@ -181,6 +206,7 @@ class BleSessionController(
     private fun fail(message: String) {
         if (state == ProtocolSessionState.FAILED) return
         Log.e(TAG, "session failed state=$state message=$message")
+        BleDiagnostics.e(TAG, "session failed state=$state message=$message")
         state = ProtocolSessionState.FAILED
         nextHeartbeatAtMs = Long.MAX_VALUE
         onStateChanged(state, message)
