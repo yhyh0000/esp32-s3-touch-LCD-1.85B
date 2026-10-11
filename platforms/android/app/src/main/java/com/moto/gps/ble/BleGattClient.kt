@@ -15,6 +15,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.util.Log
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -40,6 +41,10 @@ private const val GATT_INSUFFICIENT_ENCRYPTION = 15
 /** Android GATT central for the existing 1.85B firmware. */
 @SuppressLint("MissingPermission")
 class BleGattClient(private val context: Context) : AutoCloseable {
+    private companion object {
+        const val TAG = "MotoBleGatt"
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bluetoothManager =
         context.getSystemService(BluetoothManager::class.java)
@@ -263,6 +268,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             mainHandler.post {
+                Log.i(TAG, "connection state address=${gatt.device.address} status=$status state=$newState")
                 if (status != GATT_SUCCESS || newState != BluetoothProfile.STATE_CONNECTED) {
                     fail("GATT 连接断开：status=$status state=$newState")
                     session.stop()
@@ -276,6 +282,11 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             mainHandler.post {
+                val serviceSummary = gatt.services.orEmpty().joinToString(";") { service ->
+                    val characteristics = service.characteristics.joinToString(",") { it.uuid.toString() }
+                    "${service.uuid}[$characteristics]"
+                }
+                Log.i(TAG, "services discovered status=$status services=$serviceSummary")
                 if (status != GATT_SUCCESS) {
                     fail("服务发现失败：$status")
                     return@post
@@ -284,7 +295,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
                 rxCharacteristic = service?.getCharacteristic(MotoBleUuids.phoneToDevice)
                 txCharacteristic = service?.getCharacteristic(MotoBleUuids.deviceToPhone)
                 if (service == null || rxCharacteristic == null || txCharacteristic == null) {
-                    fail("未找到 1.85B MOTO GPS 导航服务或特征")
+                    fail("未找到 1.85B MOTO GPS 导航服务或特征；实际服务=${serviceSummary.ifBlank { "<空>" }}")
                     return@post
                 }
                 requestMtu(gatt)
