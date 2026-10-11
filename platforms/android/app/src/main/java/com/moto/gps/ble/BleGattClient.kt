@@ -82,6 +82,8 @@ class BleGattClient(private val context: Context) : AutoCloseable {
 
     private sealed interface GattOperation {
         val description: String
+        /** Whether Android will deliver a completion callback for this operation. */
+        val awaitsCallback: Boolean
         fun start(gatt: BluetoothGatt): GattStartResult
     }
 
@@ -91,6 +93,8 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     ) : GattOperation {
         override val description: String
             get() = "CCCD ${descriptor.uuid} bytes=${value.size}"
+
+        override val awaitsCallback: Boolean = true
 
         override fun start(gatt: BluetoothGatt): GattStartResult {
             return if (Build.VERSION.SDK_INT >= 33) {
@@ -117,6 +121,13 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     ) : GattOperation {
         override val description: String
             get() = "RX write type=${writeTypeName(writeType)} bytes=${value.size}"
+
+        // WRITE_TYPE_NO_RESPONSE is completed by the immediate return value of
+        // writeCharacteristic(). Waiting for onCharacteristicWrite() here
+        // would stall the serialized queue on Android 16; the callback is only
+        // required for WRITE_TYPE_DEFAULT.
+        override val awaitsCallback: Boolean =
+            writeType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
 
         override fun start(gatt: BluetoothGatt): GattStartResult {
             return if (Build.VERSION.SDK_INT >= 33) {
@@ -598,6 +609,21 @@ class BleGattClient(private val context: Context) : AutoCloseable {
         if (!result.accepted) {
             activeOperation = null
             handleGattFailure(result.statusCode, "immediate start rejected: ${operation.description}")
+            return
+        }
+        if (!operation.awaitsCallback) {
+            Log.i(
+                TAG,
+                "GATT op complete id=$operationId callback=not-required " +
+                    "${operation.description} pending=${pendingOperations.size}",
+            )
+            BleDiagnostics.i(
+                TAG,
+                "GATT op complete id=$operationId callback=not-required " +
+                    "${operation.description} pending=${pendingOperations.size}",
+            )
+            activeOperation = null
+            pumpQueue()
             return
         }
         val timeout = Runnable {

@@ -228,6 +228,41 @@ void test_phone_connection_lifecycle_reaches_the_ui() {
         MOTO_UI_PHONE_OFFLINE);
 }
 
+void test_heartbeat_restores_ui_after_transient_watchdog_state() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+
+  bridge.on_link_state(true);
+  moto::ble::ConnectionStatus ready;
+  ready.role = moto::ble::EndpointRole::Phone;
+  ready.state = moto::ble::ConnectionState::Ready;
+  ready.minimum_version = moto::ble::kProtocolVersion;
+  ready.maximum_version = moto::ble::kProtocolVersion;
+  ready.session_id = 9876;
+  CHECK(bridge.on_message(make_message(ready, 30)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_phone_connection() ==
+        MOTO_UI_PHONE_ONLINE);
+
+  // A watchdog transition must not permanently strand the UI on CONNECT PHONE
+  // when the same physical GATT session produces a valid heartbeat again.
+  bridge.on_link_state(false);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_phone_connection() ==
+        MOTO_UI_PHONE_OFFLINE);
+  bridge.on_link_state(true);
+  moto::ble::Heartbeat heartbeat;
+  heartbeat.session_id = 9876;
+  heartbeat.monotonic_ms = 1'234;
+  CHECK(bridge.on_message(make_message(heartbeat, 31)) ==
+        moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_phone_connection() ==
+        MOTO_UI_PHONE_ONLINE);
+}
+
 void test_music_capability_state_and_touch_commands() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
@@ -571,6 +606,7 @@ int main() {
   test_navigation_and_touch_updates_are_serialized();
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();
   test_phone_connection_lifecycle_reaches_the_ui();
+  test_heartbeat_restores_ui_after_transient_watchdog_state();
   test_music_capability_state_and_touch_commands();
   test_demo_uses_the_production_presenter_path();
   test_ios_demo_token_attaches_context_and_live_route_clears_it();

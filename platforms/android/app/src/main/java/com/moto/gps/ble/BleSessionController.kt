@@ -118,10 +118,10 @@ class BleSessionController(
         }
         if (now < nextHeartbeatAtMs) return
         val elapsed = (now - sessionStartedAtMs).coerceAtLeast(0L).toUInt()
-        // vivo/Android 16 may leave a write-without-response operation accepted
-        // but without a matching callback. Keep the heartbeat on the serialized
-        // write-with-response path so a stalled phone->board stream is visible
-        // to the GATT operation watchdog instead of silently blocking forever.
+        // Heartbeats are the high-frequency liveness path. The protocol uses
+        // Write Without Response for them; the GATT queue completes that kind
+        // of operation from the immediate Android return value, so a missing
+        // onCharacteristicWrite callback cannot block subsequent heartbeats.
         Log.i(
             TAG,
             "send heartbeat session=${sessionId.toString(16)} elapsedMs=$elapsed " +
@@ -132,7 +132,7 @@ class BleSessionController(
             "send heartbeat session=${sessionId.toString(16)} elapsedMs=$elapsed " +
                 "nextInMs=$heartbeatIntervalMs",
         )
-        sendFrames(codec.encodeHeartbeat(sessionId, elapsed), true)
+        sendFrames(codec.encodeHeartbeat(sessionId, elapsed), false)
         nextHeartbeatAtMs = now + heartbeatIntervalMs
     }
 

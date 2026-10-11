@@ -601,6 +601,7 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           present_navigation();
         } else if constexpr (std::is_same_v<T, moto::ble::Heartbeat>) {
           std::uint32_t phone_session_id = 0;
+          bool restore_online = false;
           {
             const std::lock_guard<std::mutex> lock(state_mutex_);
             phone_session_id = phone_session_id_;
@@ -608,9 +609,27 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           if (phone_session_id != 0 && value.session_id != phone_session_id) {
             return moto::ble::AckStatus::InvalidState;
           }
+          {
+            const std::lock_guard<std::mutex> lock(state_mutex_);
+            // The transport watchdog can briefly mark the app-link offline
+            // while the physical GATT connection remains established. The
+            // next valid heartbeat is proof that this same session is alive;
+            // restore the board UI instead of leaving it on CONNECT PHONE.
+            if (phone_session_id_ == 0) {
+              phone_session_id_ = value.session_id;
+            }
+            if (link_active_ &&
+                ui_phone_connection_ != MOTO_UI_PHONE_ONLINE) {
+              ui_phone_connection_ = MOTO_UI_PHONE_ONLINE;
+              phone_snapshot_locked().network =
+                  moto::nav::NetworkState::Online;
+              restore_online = true;
+            }
+          }
           // Retry until the phone acknowledges its current settings. A
           // transient notification failure must not leave its controls empty.
           send_device_settings();
+          if (restore_online) present_navigation();
         } else if constexpr (
             std::is_same_v<T, moto::ble::NavigationSnapshot>) {
           consume_navigation(value);
