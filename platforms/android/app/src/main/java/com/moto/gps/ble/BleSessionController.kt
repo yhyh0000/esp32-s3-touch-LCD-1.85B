@@ -9,6 +9,7 @@ import java.security.SecureRandom
 
 private const val DEVICE_ROLE = 2
 private const val DEVICE_READY = 1
+private const val DEVICE_DEGRADED = 2
 private const val HEARTBEAT_DEFAULT_MS = 1_000L
 
 enum class ProtocolSessionState {
@@ -39,6 +40,7 @@ class BleSessionController(
     private var heartbeatIntervalMs = HEARTBEAT_DEFAULT_MS
     private var nextHeartbeatAtMs = Long.MAX_VALUE
     private var lastDeviceFrameAtMs = 0L
+    private var deviceReportedDegraded = false
     private var state = ProtocolSessionState.IDLE
     private var localMaximumFrameSize = 20
 
@@ -51,6 +53,7 @@ class BleSessionController(
         heartbeatIntervalMs = HEARTBEAT_DEFAULT_MS
         nextHeartbeatAtMs = Long.MAX_VALUE
         lastDeviceFrameAtMs = sessionStartedAtMs
+        deviceReportedDegraded = false
         state = ProtocolSessionState.WAITING_DEVICE_READY
         Log.i(
             TAG,
@@ -87,7 +90,10 @@ class BleSessionController(
             is NativeBleEvent.ConnectionStatus -> onConnectionStatus(event)
             is NativeBleEvent.Heartbeat -> {
                 if (event.sessionId == sessionId) {
-                    nextHeartbeatAtMs = nowElapsedMs() + heartbeatIntervalMs
+                    if (deviceReportedDegraded && state == ProtocolSessionState.READY) {
+                        deviceReportedDegraded = false
+                        onStateChanged(state, "设备心跳已恢复，连接稳定")
+                    }
                 }
             }
 
@@ -143,6 +149,7 @@ class BleSessionController(
         sessionId = 0u
         nextHeartbeatAtMs = Long.MAX_VALUE
         lastDeviceFrameAtMs = 0L
+        deviceReportedDegraded = false
         codec.resetInboundState()
         onStateChanged(state, "连接已断开")
     }
@@ -162,8 +169,10 @@ class BleSessionController(
             fail("设备握手会话不匹配")
             return
         }
-        if (event.state != DEVICE_READY) {
-            fail("设备未进入 Ready，state=${event.state}")
+        val deviceReady = event.state == DEVICE_READY
+        val deviceDegraded = event.state == DEVICE_DEGRADED
+        if (!deviceReady && !deviceDegraded) {
+            fail("设备状态不可继续握手，state=${event.state}")
             return
         }
 
@@ -176,6 +185,10 @@ class BleSessionController(
 
         when (state) {
             ProtocolSessionState.WAITING_DEVICE_READY -> {
+                if (!deviceReady) {
+                    fail("握手阶段设备未进入 Ready，state=${event.state}")
+                    return
+                }
                 state = ProtocolSessionState.WAITING_FINAL_DEVICE_READY
                 onStateChanged(state, "收到设备 Ready，发送 Phone Ready")
                 sendFrames(
@@ -185,13 +198,24 @@ class BleSessionController(
             }
 
             ProtocolSessionState.WAITING_FINAL_DEVICE_READY -> {
+                if (!deviceReady) {
+                    fail("握手阶段设备未进入 Ready，state=${event.state}")
+                    return
+                }
                 state = ProtocolSessionState.READY
                 nextHeartbeatAtMs = nowElapsedMs() + heartbeatIntervalMs
                 onStateChanged(state, "协议握手完成，设备可接收导航状态")
             }
 
             ProtocolSessionState.READY -> {
-                nextHeartbeatAtMs = nowElapsedMs() + heartbeatIntervalMs
+                if (deviceDegraded) {
+                    if (!deviceReportedDegraded) {
+                        deviceReportedDegraded = true
+                        onStateChanged(state, "设备报告链路降级，保持连接并等待心跳恢复")
+                    }
+                } else {
+                    deviceReportedDegraded = false
+                }
             }
 
             else -> fail("握手状态异常：$state")
