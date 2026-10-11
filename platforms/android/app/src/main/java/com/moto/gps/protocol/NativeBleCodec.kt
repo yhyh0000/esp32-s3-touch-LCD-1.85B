@@ -105,13 +105,6 @@ enum class ConnectionState(val wireValue: Int) {
 }
 
 sealed interface NativeBleEvent {
-    val sequence: Int
-        get() = 0
-    val ackRequested: Boolean
-        get() = false
-    val ackCommandId: Int
-        get() = 0
-
     data class ConnectionStatus(
         val role: Int,
         val state: Int,
@@ -119,7 +112,7 @@ sealed interface NativeBleEvent {
         val sessionId: UInt,
         val maximumFrameSize: Int,
         val heartbeatIntervalMs: Int,
-        override val sequence: Int,
+        val sequence: Int,
     ) : NativeBleEvent
 
     data class Heartbeat(
@@ -136,13 +129,13 @@ sealed interface NativeBleEvent {
     /** A valid message whose payload is not needed by the first Android stage. */
     data class DeviceMessage(
         val type: Int,
-        override val sequence: Int,
-        override val ackRequested: Boolean,
-        override val ackCommandId: Int = 0,
+        val sequence: Int,
+        val ackRequested: Boolean,
+        val ackCommandId: Int = 0,
     ) : NativeBleEvent
 
-    data class Partial(override val sequence: Int) : NativeBleEvent
-    data class Duplicate(override val sequence: Int) : NativeBleEvent
+    data class Partial(val sequence: Int) : NativeBleEvent
+    data class Duplicate(val sequence: Int) : NativeBleEvent
     data class Error(val message: String) : NativeBleEvent
 
     companion object {

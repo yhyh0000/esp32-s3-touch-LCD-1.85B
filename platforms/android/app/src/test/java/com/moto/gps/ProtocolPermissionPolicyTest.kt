@@ -28,7 +28,8 @@ class ProtocolPermissionPolicyTest {
             "{\"kind\":\"complete\",\"type\":33," +
                 "\"sequence\":17,\"ackRequested\":true}"
         )
-        assertEquals(17, event.sequence)
-        assertEquals(true, event.ackRequested)
+        val deviceMessage = event as NativeBleEvent.DeviceMessage
+        assertEquals(17, deviceMessage.sequence)
+        assertEquals(true, deviceMessage.ackRequested)
     }
 }
