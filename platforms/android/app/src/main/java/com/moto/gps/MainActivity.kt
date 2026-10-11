@@ -1,0 +1,145 @@
+package com.moto.gps
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.moto.gps.ble.BleLinkState
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                MotoGpsScreen()
+            }
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun MotoGpsScreen(viewModel: MainViewModel = viewModel()) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var permissionMessage by remember { mutableStateOf("") }
+    val permissions = remember { requiredPermissions() }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val missing = result.filterValues { !it }.keys
+        permissionMessage = if (missing.isEmpty()) {
+            "权限已授予"
+        } else {
+            "仍缺少权限：${missing.joinToString()}"
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val missing = permissions.filterNot {
+            ContextCompat.checkSelfPermission(
+                context,
+                it,
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("MOTO GPS Android", style = MaterialTheme.typography.headlineSmall)
+        Text("Waveshare ESP32-S3-Touch-LCD-1.85B · vivo X200 Pro mini / Android 16")
+        Text("链路：${uiState.linkState}；${uiState.message}")
+        if (permissionMessage.isNotBlank()) Text(permissionMessage)
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { viewModel.runProtocolSelfCheck() }) {
+                Text("协议自检")
+            }
+            OutlinedButton(onClick = { permissionLauncher.launch(permissions.toTypedArray()) }) {
+                Text("检查权限")
+            }
+            OutlinedButton(onClick = { viewModel.scan() }) {
+                Text("扫描圆屏")
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("共享核心自检：${uiState.protocolSelfCheck}")
+                Spacer(Modifier.height(4.dp))
+                Text("当前阶段只验证 BLE 与协议握手，尚未发送路线或模拟位置。")
+            }
+        }
+
+        if (uiState.devices.isEmpty()) {
+            Text("尚未发现设备。请确认 1.85B 固件已启动并显示 MOTO GPS。")
+        } else {
+            Text("选择设备（必须明确选择，不自动连接）：")
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(uiState.devices, key = { it.address }) { device ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column {
+                                Text(device.name)
+                                Text("${device.address} · RSSI ${device.rssi}")
+                            }
+                            Button(onClick = { viewModel.connect(device.address) }) {
+                                Text("连接")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (uiState.linkState == BleLinkState.READY) {
+            OutlinedButton(onClick = viewModel::disconnect) {
+                Text("断开圆屏")
+            }
+        }
+    }
+}
+
+private fun requiredPermissions(): List<String> = buildList {
+    if (Build.VERSION.SDK_INT >= 31) {
+        add(Manifest.permission.BLUETOOTH_SCAN)
+        add(Manifest.permission.BLUETOOTH_CONNECT)
+    } else {
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+    if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+}
