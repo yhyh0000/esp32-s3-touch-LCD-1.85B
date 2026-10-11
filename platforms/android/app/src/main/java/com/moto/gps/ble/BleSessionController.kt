@@ -62,6 +62,7 @@ class BleSessionController(
             }
 
             is NativeBleEvent.Acknowledgement -> Unit
+            is NativeBleEvent.DeviceMessage -> Unit
             is NativeBleEvent.Partial, is NativeBleEvent.Duplicate -> Unit
             is NativeBleEvent.Error -> fail("设备帧错误：${event.message}")
         }

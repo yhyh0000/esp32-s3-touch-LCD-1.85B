@@ -119,7 +119,7 @@ sealed interface NativeBleEvent {
         val sessionId: UInt,
         val maximumFrameSize: Int,
         val heartbeatIntervalMs: Int,
-        val sequence: Int,
+        override val sequence: Int,
     ) : NativeBleEvent
 
     data class Heartbeat(
@@ -141,8 +141,8 @@ sealed interface NativeBleEvent {
         override val ackCommandId: Int = 0,
     ) : NativeBleEvent
 
-    data class Partial(val sequence: Int) : NativeBleEvent
-    data class Duplicate(val sequence: Int) : NativeBleEvent
+    data class Partial(override val sequence: Int) : NativeBleEvent
+    data class Duplicate(override val sequence: Int) : NativeBleEvent
     data class Error(val message: String) : NativeBleEvent
 
     companion object {
