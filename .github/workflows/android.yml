@@ -47,25 +47,7 @@ jobs:
 
       - name: Build, unit test and lint
         working-directory: platforms/android
-        run: |
-          set +e
-          ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug 2>&1 | tee "$RUNNER_TEMP/android-build.log"
-          status=${PIPESTATUS[0]}
-          set -e
-          if [ "$status" -ne 0 ]; then
-            grep -E "(e: |error:|ERROR|FAILED|Unresolved|Exception|What went wrong|A problem occurred)" "$RUNNER_TEMP/android-build.log" | tail -n 80 | while IFS= read -r line; do
-              echo "::error title=Gradle build output::$line"
-            done
-            exit "$status"
-          fi
-
-      - name: Upload Android build log for diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: moto-gps-android-build-log-${{ github.sha }}
-          path: ${{ runner.temp }}/android-build.log
-          if-no-files-found: warn
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

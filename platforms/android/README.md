@@ -26,7 +26,7 @@ Android 16 的真机行为仍以实测为准；targetSdk 35 不等于已经完�
 本机当前没有可用的 JDK、Android SDK 或 Gradle 命令，因此第一阶段的 Android 构建由 GitHub
 Actions 在干净环境执行；不要把这个限制写成“本地构建通过”。
 
-## 第一阶段已实现
+## 已实现内容
 
 - 原生 Kotlin + Jetpack Compose 工程骨架。
 - NDK/CMake/JNI 直接编译并复用 `shared/ble_protocol` 和 `shared/coordinates`；Kotlin 不重复实现
@@ -38,7 +38,12 @@ Actions 在干净环境执行；不要把这个限制写成“本地构建通过
 - v1 `Phone Starting → Device Ready → Phone Ready → Device Ready` 完整握手。
 - 以当前 BLE 会话的已用时间发送心跳，不把手机系统启动时长写入协议。
 - App 内“协议自检”：复用共享 C++ codec 对已有 golden payload/frame 和坐标核心进行检查。
-- 不发送假位置、假路线或演示路线；第一阶段只做连接与协议自检。
+- 网关地址可配置；目的地搜索、WGS84 位置偏置、候选路线返回和路线选择已接入现有
+  `/v1/places`、`/v1/route-options` schema。
+- 选定路线后，手机使用共享坐标核心把 WGS84 位置转换为 GCJ-02，并通过共享 BLE codec
+  发送有边界的 RouteGeometry 窗口与 NavigationSnapshot；没有位置或网关失败时不自动伪造位置/路线。
+- 仍不宣称已经完成高德实车导航：当前实现尚未包含前台导航服务、锁屏保活、自动重算路线、离线地图、
+  路况数据或音乐控制。
 
 ## 真实接口基线
 
@@ -70,9 +75,11 @@ Windows PowerShell：
 
 CI 会从干净检出拉取子模块，并安装固定的 SDK、NDK 和 CMake 后执行相同的 Gradle 检查。
 
-当前提交 `ef5f4bc` 的 [Android app checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38124607549)
-已通过；同一提交的 [Source checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38124607466)
-也已通过。验证范围是干净 CI 环境中的编译、JNI/CMake、单元测试、lint 和 Debug APK 打包，不等于真机验收。
+当前提交 `712879d` 的 [Android app checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38144198869)
+和 [Source checks](https://github.com/yhyh0000/esp32-s3-touch-LCD-1.85B/actions/runs/38144198870)
+均已通过。Android 检查包含干净 CI 环境中的 JNI/CMake、单元测试、lint 和 Debug APK 打包；
+这不等于真实手机、网关或圆屏导航验收。该运行的 Debug APK 制品名为
+`moto-gps-android-debug-712879dcf139fe80496ac30cefff94a91920831c`。
 
 ## BLE 故障日志
 
@@ -104,19 +111,19 @@ Android 心跳已改为 Write With Response，目的是让 vivo 的手机→板�
 ## 权限与未验证项
 
 第一阶段申请 Android 12+ 的 `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`，旧系统申请精确定位用于
-BLE 扫描，并申请 Android 13+ 通知权限。没有使用 `neverForLocation`，因为后续真实导航仍需要
-独立的位置权限。导航前台服务、持续定位、锁屏行为和通知停止入口在第二阶段加入；当前没有声明
-“后台不被杀”或“锁屏可用”。
+BLE 扫描，并申请 Android 13+ 通知权限；真实导航还申请精确/粗略位置权限。没有使用
+`neverForLocation`，因为导航定位是独立能力。当前定位仍由 Activity 进程内的 `LocationManager`
+维护，前台导航服务、持续通知、锁屏行为和通知停止入口尚未加入；不声明“后台不被杀”或“锁屏可用”。
 
-尚未验证：vivo X200 Pro mini 真机权限弹窗、系统配对、1.85B 实机 GATT 握手、断连恢复、锁屏、
-MTU 实际值和耗电。没有真机结果时不标记硬件验收完成。
+BLE 连接/握手已在 vivo X200 Pro mini / Android 16 与 1.85B 真机联调过；本次真实网关路线、
+持续定位、锁屏、断连恢复、MTU 边界和耗电仍未完成验收。没有把 CI 通过标记为硬件验收完成。
 
 ## 阶段进度
 
 | 阶段 | 状态 |
 | --- | --- |
-| 工程 / JNI / BLE / 协议自检 | 已实现，CI 构建通过，待真机验收 |
-| 搜索、WGS84 定位、候选路线、导航快照 | 未开始 |
+| 工程 / JNI / BLE / 协议自检 | 已实现，CI 构建通过，BLE/协议已做真机联调 |
+| 搜索、WGS84 定位、候选路线、导航快照 | 已实现第一版，待真实网关和连续导航验收 |
 | 前台导航服务、锁屏与断连恢复回归 | 未开始 |
 | 在线 / 城市 / 沿途地图下载 | 未开始 |
 | 音乐控制 | 后续评估，不承诺任意音乐 App 可控 |
