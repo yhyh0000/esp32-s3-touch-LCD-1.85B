@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -75,7 +76,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     ) : GattOperation {
         override fun start(gatt: BluetoothGatt): Boolean {
             return if (Build.VERSION.SDK_INT >= 33) {
-                gatt.writeDescriptor(descriptor, value) == GATT_SUCCESS
+                gatt.writeDescriptor(descriptor, value) == BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
                 run {
@@ -93,7 +94,7 @@ class BleGattClient(private val context: Context) : AutoCloseable {
     ) : GattOperation {
         override fun start(gatt: BluetoothGatt): Boolean {
             return if (Build.VERSION.SDK_INT >= 33) {
-                gatt.writeCharacteristic(characteristic, value, writeType) == GATT_SUCCESS
+                gatt.writeCharacteristic(characteristic, value, writeType) == BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
                 run {
