@@ -3,6 +3,7 @@ package com.moto.gps
 import com.moto.gps.ble.MotoBleUuids
 import com.moto.gps.protocol.NativeBleEvent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProtocolPermissionPolicyTest {
@@ -28,6 +29,7 @@ class ProtocolPermissionPolicyTest {
             "{\"kind\":\"complete\",\"type\":33," +
                 "\"sequence\":17,\"ackRequested\":true}"
         )
+        assertTrue("Unexpected protocol event: $event", event is NativeBleEvent.DeviceMessage)
         val deviceMessage = event as NativeBleEvent.DeviceMessage
         assertEquals(17, deviceMessage.sequence)
         assertEquals(true, deviceMessage.ackRequested)
